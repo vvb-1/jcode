@@ -565,6 +565,25 @@ fn test_fuzzy_command_suggestions() {
 }
 
 #[test]
+fn test_fuzzy_command_suggestions_match_descriptions() {
+    let app = create_test_app();
+    // `/save` is described as "Bokmärk session för enkel åtkomst", so typing a
+    // word from the description surfaces it even though the name does not match.
+    let suggestions = app.get_suggestions_for("/bokmärk");
+    assert!(
+        suggestions.iter().any(|(cmd, _)| cmd == "/save"),
+        "expected /save from description match, got: {suggestions:?}"
+    );
+
+    // Name matches must still outrank description matches.
+    let suggestions = app.get_suggestions_for("/model");
+    assert_eq!(
+        suggestions.first().map(|(cmd, _)| cmd.as_str()),
+        Some("/model")
+    );
+}
+
+#[test]
 fn test_refresh_model_list_command_suggestions() {
     let app = create_test_app();
     let suggestions = app.get_suggestions_for("/refresh");

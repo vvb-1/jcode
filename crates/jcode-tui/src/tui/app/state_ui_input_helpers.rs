@@ -319,14 +319,25 @@ impl App {
         candidates: Vec<(String, &'static str)>,
     ) -> Vec<(String, &'static str)> {
         let needle = needle.to_lowercase();
-        // Bucket 1 = literal prefix matches (exact typing always wins).
-        // Bucket 0 = typo-tolerant fuzzy matches by descending score.
+        // Bucket 2 = literal prefix matches (exact typing always wins).
+        // Bucket 1 = typo-tolerant fuzzy matches on the command name.
+        // Bucket 0 = fuzzy matches on the command's description, so typing a
+        // word from the help text (e.g. `/bok` -> "Sätter ett bokmärke ...")
+        // still surfaces the command.
+        let description_needle = needle.trim_start_matches('/').trim();
+        let description_query = (description_needle.chars().count() >= 2)
+            .then(|| jcode_fuzzy::PreparedTokenQuery::new(description_needle));
         let mut scored: Vec<(u8, i32, String, &'static str)> = Vec::new();
         for (cmd, help) in candidates {
             let lower = cmd.to_lowercase();
             if lower.starts_with(&needle) {
-                scored.push((1, i32::MAX, cmd, help));
+                scored.push((2, i32::MAX, cmd, help));
             } else if let Some(score) = Self::fuzzy_score(&needle, &lower) {
+                scored.push((1, score, cmd, help));
+            } else if let Some(score) = description_query
+                .as_ref()
+                .and_then(|query| query.score(&help.to_lowercase()))
+            {
                 scored.push((0, score, cmd, help));
             }
         }
