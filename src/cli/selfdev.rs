@@ -76,6 +76,10 @@ fn resolve_or_clone_repo_dir() -> Result<PathBuf> {
     Ok(repo_dir)
 }
 
+fn selfdev_remote_working_dir(repo_dir: &std::path::Path) -> Option<String> {
+    Some(repo_dir.display().to_string())
+}
+
 async fn wait_for_reloading_server() -> bool {
     match crate::server::await_reload_handoff(
         &crate::server::socket_path(),
@@ -226,12 +230,16 @@ pub async fn run_self_dev(should_build: bool, resume_session: Option<String>) ->
 
     output::stderr_info("Starting self-dev TUI...");
 
+    // A self-dev launch may start outside the source checkout. Send the
+    // resolved repository explicitly so the server uses it for project
+    // instructions, skills, hooks, and tool working directories instead of
+    // inheriting the caller's unrelated current directory.
     super::tui_launch::run_tui_client(
         Some(session_id),
         None,
         !server_running,
         false,
-        None,
+        selfdev_remote_working_dir(&repo_dir),
         false,
         false,
     )

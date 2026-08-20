@@ -1,4 +1,4 @@
-use super::wait_for_reloading_server;
+use super::{selfdev_remote_working_dir, wait_for_reloading_server};
 use crate::build;
 use crate::{provider, session, storage, tool};
 use std::ffi::{OsStr, OsString};
@@ -70,6 +70,15 @@ impl TestEnvGuard {
 
 fn setup_test_env() -> TestEnvGuard {
     TestEnvGuard::new().expect("failed to setup isolated test environment")
+}
+
+#[test]
+fn selfdev_launch_forwards_repo_as_remote_working_dir() {
+    let repo_dir = Path::new("/workspace/jcode");
+    assert_eq!(
+        selfdev_remote_working_dir(repo_dir).as_deref(),
+        Some("/workspace/jcode")
+    );
 }
 
 struct TestProvider;
