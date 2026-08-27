@@ -70,3 +70,37 @@ scripts/dev_cargo.sh build --profile selfdev -p jcode --bin jcode
 
 En grön kompilering räcker inte för UI-ändringar. Kontrollera att
 slash-menyn faktiskt visar svenska efter `selfdev reload`.
+
+## Hooks på denna maskin
+
+Aktiva i `~/.jcode/config.toml`:
+
+| Hook | Skript | Typ |
+| --- | --- | --- |
+| `pre_tool` | `~/bin/jcode-tool-policy` | gate, kan blockera (exit 2) |
+| `session_start` | `~/bin/jcode-session-start` | observer, blockerar aldrig |
+
+`pre_tool` blockerar push till remotes som inte tillhör `vvb-1`, rent
+`git push --force`, historikförstörande git-kommandon och klassiskt
+destruktiva shell-kommandon.
+
+### Verifiera alltid efter ändring
+
+```bash
+bash ~/bin/jcode-hooks-verify
+```
+
+Den kontrollerar config, att skripten finns, att exec-biten är satt, och kör
+båda beteendesviterna (25 + 8 fall).
+
+### Fallgropar som faktiskt inträffade 2026-08-27
+
+1. **Saknad exec-bit failar open.** jcode loggar en varning och fortsätter, så
+   en trasig hook ser ut att fungera. Därför kontrollerar `jcode-hooks-verify`
+   exec-biten explicit.
+2. **Skriv aldrig `${VAR:-{}}` i bash.** Klammern tolkas fel och ger en extra
+   `}`, vilket gjorde händelseloggen till ogiltig JSON.
+3. **Heredoc-kroppar är data, inte kommandon.** Policyn blockerade först
+   dokumentation som bara *nämnde* farliga kommandon. Den klipper nu bort
+   heredoc-kroppar före matchning, men kontrollerar fortfarande kommandon
+   efter avslutaren.
