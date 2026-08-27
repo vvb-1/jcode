@@ -1532,3 +1532,46 @@ mod tests {
         assert!(SkillRegistry::plugin_skill_dirs_under(&missing).is_empty());
     }
 }
+
+#[cfg(test)]
+mod vvb_project_skill_tests {
+    use super::*;
+
+    /// Verifierar att den projekt-lokala skillen i detta repo faktiskt laddas
+    /// av produktionskoden, inte bara att filen råkar finnas på disk.
+    #[test]
+    fn vvb_jcode_fork_skill_laddas_fran_projektkatalogen() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("repo-rot")
+            .to_path_buf();
+
+        let skill_fil = repo.join(".jcode/skills/vvb-jcode-fork/SKILL.md");
+        assert!(
+            skill_fil.exists(),
+            "projekt-skillen saknas pa disk: {}. Ett tidigt return har skulle gora testet till \
+             en no-op som passerar aven nar skillen ar borta.",
+            skill_fil.display()
+        );
+
+        let overlay = SkillRegistry::load_project_overlay(Some(&repo)).expect("ladda overlay");
+        let skill = overlay
+            .get("vvb-jcode-fork")
+            .expect("vvb-jcode-fork ska laddas fran .jcode/skills/");
+
+        assert_eq!(skill.path, skill_fil);
+        assert!(
+            skill.description.contains("uppdatera jcode"),
+            "beskrivningen ska namna triggern"
+        );
+        assert!(
+            skill.content.contains("crab/sv-dropdown"),
+            "innehallet ska namna arbetsbranchen"
+        );
+        assert!(
+            skill.content.contains("jcode-hooks-verify"),
+            "innehallet ska namna verifieringskommandot"
+        );
+    }
+}
