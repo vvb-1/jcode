@@ -1,0 +1,72 @@
+---
+name: vvb-jcode-fork
+description: Använd vid ALLT arbete i detta repo (vvb-1-forken av jcode) — uppdatering från upstream, rebase av crab/sv-dropdown, konfliktlösning i de svenska översättningarna, byggverifiering och push. Använd särskilt när användaren säger "uppdatera jcode".
+---
+
+# VVB:s fork av jcode
+
+Detta är **inte** upstream-repot. Det är Kristians fork med egna patchar ovanpå.
+
+## Remotes — kritiskt
+
+| Remote   | URL                                  | Får pushas till |
+| -------- | ------------------------------------ | --------------- |
+| `origin` | `https://github.com/1jehuang/jcode`  | **ALDRIG**      |
+| `fork`   | `https://github.com/vvb-1/jcode`     | Ja              |
+
+`origin` är underhållarens repo. En `pre_tool`-hook (`~/bin/jcode-tool-policy`)
+blockerar push dit, men förlita dig inte på den. Kontrollera själv.
+
+Arbetsbranch: **`crab/sv-dropdown`**. Lämna aldrig användaren kvar på `master`.
+
+## Egna patchar som måste bevaras
+
+1. `i18n: översätt slash-kommandobeskrivningar till svenska (VVB)`
+   — `crates/jcode-tui/src/tui/app/state_ui_input_helpers.rs`
+2. `tui: fuzzy-matcha slash-kommandon även mot beskrivningen`
+3. `docs: define self-dev agent workflow`
+4. `fix: use repo working dir for self-dev` — `src/cli/selfdev.rs`
+
+## Flödet för "uppdatera jcode"
+
+```bash
+git checkout master
+git pull --ff-only
+git checkout crab/sv-dropdown
+git rebase master
+# lös konflikter, se nedan
+selfdev build target=tui        # måste ge exit 0
+git push --force-with-lease fork crab/sv-dropdown
+```
+
+Kör **aldrig** `git pull` medan HEAD står på `crab/sv-dropdown`.
+Kör **aldrig** `git rebase --abort` utan att fråga.
+
+## Återkommande konflikter och hur de löses
+
+### `state_ui_input_helpers.rs`
+Upstream lägger till nya slash-kommandon på engelska. Behåll **vår** sida
+(svenska) och **översätt de nya kommandona** i stället för att tappa dem.
+Exempel: upstream lade till `/update-sim`, vilket blev
+`"Förhandsvisa uppdaterings-UI säkert (Alt+_)"`.
+
+Checklista: jämför antalet `RegisteredCommand::`-rader före och efter. Blir
+det färre har ett upstream-kommando fallit bort.
+
+### `src/cli/selfdev.rs`
+Upstream ändrar signaturen på `run_tui_client`. Vår patch skickar
+`selfdev_remote_working_dir(&repo_dir)` som `remote_working_dir` i stället för
+`None`. Behåll det argumentet och lägg till upstreams nya argument
+(t.ex. `update_sim: bool`) på rätt position. Verifiera mot signaturen i
+`src/cli/tui_launch.rs`.
+
+## Verifiering
+
+```bash
+selfdev build target=tui
+# fallback om coordinated build saknas:
+scripts/dev_cargo.sh build --profile selfdev -p jcode --bin jcode
+```
+
+En grön kompilering räcker inte för UI-ändringar. Kontrollera att
+slash-menyn faktiskt visar svenska efter `selfdev reload`.
