@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Kontrollerar att de versionshanterade kopiorna i .jcode/bin/ ar identiska
+# med de skript som FAKTISKT kors fran ~/bin.
+#
+# VARFOR: en versionshanterad kopia som driftat isar fran verkligheten ar
+# varre an ingen kopia alls, eftersom den ger falsk trygghet. Historiken
+# skulle da beskriva kod som ingen kor.
+#
+# ANVANDNING
+#   vvb-bin-sync            # kontrollera, andrar ingenting
+#   vvb-bin-sync --to-repo  # kopiera ~/bin -> repo (efter en andring)
+#   vvb-bin-sync --to-home  # kopiera repo -> ~/bin (efter en git pull)
+
+set -uo pipefail
+
+REPO="${JCODE_REPO_DIR:-/home/krily/workspace/jcode-audit}"
+REPO_BIN="$REPO/.jcode/bin"
+HOME_BIN="$HOME/bin"
+MODE="check"
+
+case "${1:-}" in
+    --to-repo) MODE="to-repo" ;;
+    --to-home) MODE="to-home" ;;
+    --help | -h)
+        sed -n '2,14p' "$0" | sed 's/^# \?//'
+        exit 0
+        ;;
+    "") ;;
+    *)
+        echo "okand flagga: $1" >&2
+        exit 2
+        ;;
+esac
+
+[ -d "$REPO_BIN" ] || {
+    echo "saknar $REPO_BIN" >&2
+    exit 1
+}
+
+fail=0
+changed=0
+for src in "$REPO_BIN"/*; do
+    name=$(basename "$src")
+    live="$HOME_BIN/$name"
+
+    if [ ! -f "$live" ]; then
+        printf '  %-28s SAKNAS i ~/bin\n' "$name"
+        [ "$MODE" = "to-home" ] && cp "$src" "$live" && chmod +x "$live" &&
+            printf '  %-28s -> kopierad till ~/bin\n' "$name" && changed=$((changed + 1))
+        [ "$MODE" != "to-home" ] && fail=1
+        continue
+    fi
+
+    if cmp -s "$src" "$live"; then
+        [ "$MODE" = "check" ] && printf '  %-28s synk\n' "$name"
+        continue
+    fi
+
+    case "$MODE" in
+        check)
+            printf '  %-28s SKILJER SIG\n' "$name"
+            diff -u "$src" "$live" | head -12 | sed 's/^/      /'
+            fail=1
+            ;;
+        to-repo)
+            cp "$live" "$src"
+            printf '  %-28s ~/bin -> repo\n' "$name"
+            changed=$((changed + 1))
+            ;;
+        to-home)
+            cp "$src" "$live"
+            chmod +x "$live"
+            printf '  %-28s repo -> ~/bin\n' "$name"
+            changed=$((changed + 1))
+            ;;
+    esac
+done
+
+echo
+case "$MODE" in
+    check)
+        if [ "$fail" = 0 ]; then
+            echo "Alla skript ar i synk mellan repo och ~/bin."
+        else
+            echo "AVVIKELSER HITTADE. Kor --to-repo eller --to-home for att synka."
+        fi
+        ;;
+    *) echo "$changed fil(er) synkade." ;;
+esac
+exit "$fail"

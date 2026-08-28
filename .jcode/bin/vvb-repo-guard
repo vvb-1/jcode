@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# vvb-repo-guard — enhetligt merge-skydd for vvb-1:s repon.
+#
+# BAKGRUND
+#   PR #11 i workspace-file-server mergades ofullstandigt 2026-08-22 och tre
+#   sakerhetsfixar foll bort. Grundorsaken var inte CI: den var att main var
+#   OSKYDDAD, sa merge kunde ske forbi alla gates. CI utan branch protection
+#   ar dekoration.
+#
+# VAD DEN GOR
+#   Satter samma skyddsprofil pa angivna repon:
+#     - PR kravs, minst 1 godkannande
+#     - stale-godkannanden ogiltiga nar ny kod pushas
+#     - alla checks som repot faktiskt kor maste passera
+#     - branch maste vara uppdaterad mot main (strict)
+#     - force push blockerat, radering blockerat
+#     - reglerna galler AVEN admins (annars ar de radgivande)
+#     - konversationer maste vara losta
+#
+# ANVANDNING
+#   vvb-repo-guard                      # torrkorning pa aktiva repon
+#   vvb-repo-guard --apply              # tillampa
+#   vvb-repo-guard --apply repo1 repo2  # bara vissa repon
+#   vvb-repo-guard --status             # visa nulage utan att andra
+#
+# SAKERHET
+#   Torrkorning ar DEFAULT. Utan --apply andras ingenting.
+
+set -uo pipefail
+
+OWNER="vvb-1"
+APPLY=0
+STATUS_ONLY=0
+REPOS=()
+
+# Repon som ar aktiva och darmed vardsa att skydda. Halls medvetet kort:
+# att skydda 94 repon inklusive doda experiment ar ingen vinst.
+DEFAULT_REPOS=(
+    workspace-file-server
+    vvb-bridge
+    vivetbil-website
+    VVB-OPS
+    vivetbil-assistent
+    VVB-Diag-helper
+    vvb-infrastructure-platform
+    hdb116-gateway
+)
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --apply) APPLY=1 ;;
+        --status) STATUS_ONLY=1 ;;
+        --help | -h)
+            sed -n '2,30p' "$0" | sed 's/^# \?//'
+            exit 0
+            ;;
+        -*)
+            echo "okand flagga: $1" >&2
+            exit 2
+            ;;
+        *) REPOS+=("$1") ;;
+    esac
+    shift
+done
+
+[ ${#REPOS[@]} -gt 0 ] || REPOS=("${DEFAULT_REPOS[@]}")
+
+command -v gh >/dev/null 2>&1 || {
+    echo "gh saknas" >&2
+    exit 1
+}
+gh auth status >/dev/null 2>&1 || {
+    echo "gh ej inloggad" >&2
+    exit 1
+}
+
+# Vilka status-checks kor repot faktiskt? Att krava en check som inte finns
+# laser branchen permanent, sa listan maste komma fran verkligheten.
+#
+# Deploy- och leveranschecks filtreras BORT. En gate ska bevisa att koden ar
+# korrekt, inte att en extern plattform var uppe. Kraver man "Deploy" laser
+# ett Cloudflare-avbrott hela main. Dependabot-checks filtreras ocksa bort:
+# de ar informativa och kors inte pa varje commit.
+discover_checks() {
+    local repo="$1" branch="$2"
+    gh api "repos/$OWNER/$repo/commits/$branch/check-runs" \
+        --jq '[.check_runs[].name] | unique | .[]' 2>/dev/null |
+        grep -viE '^(deploy|dependabot)|deploy|Workers Builds|reachability|staging' || true
+}
+
+show_status() {
+    local repo="$1"
+    local branch
+    branch=$(gh api "repos/$OWNER/$repo" --jq '.default_branch' 2>/dev/null) || return
+    local prot
+    # OBS: gh api skriver felmeddelandet till stdout aven vid 404, sa en
+    # icke-tom strang bevisar ingenting. Exit-koden ar det som galler.
+    if ! prot=$(gh api "repos/$OWNER/$repo/branches/$branch/protection" 2>/dev/null); then
+        printf '  %-32s %-6s OSKYDDAD\n' "$repo" "$branch"
+        return
+    fi
+    if [ -z "$prot" ] || ! printf '%s' "$prot" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if isinstance(d,dict) and "url" in d else 1)' 2>/dev/null; then
+        printf '  %-32s %-6s OSKYDDAD\n' "$repo" "$branch"
+        return
+    fi
+    printf '%s' "$prot" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+rpr=d.get("required_pull_request_reviews") or {}
+rsc=d.get("required_status_checks") or {}
+hal=[]
+if (d.get("allow_force_pushes") or {}).get("enabled"): hal.append("force-push tillaten")
+if not (d.get("enforce_admins") or {}).get("enabled"): hal.append("admins undantagna")
+if not rsc: hal.append("inga kravda checks")
+if not rsc.get("strict"): hal.append("ej strict")
+print("SKYDDAD" + ("  HAL: " + ", ".join(hal) if hal else "  (komplett)"))
+' 2>/dev/null | while read -r line; do
+        printf '  %-32s %-6s %s\n' "$repo" "$branch" "$line"
+    done
+}
+
+apply_guard() {
+    local repo="$1"
+    local branch
+    branch=$(gh api "repos/$OWNER/$repo" --jq '.default_branch' 2>/dev/null) || {
+        printf '  %-32s KUNDE INTE LASA\n' "$repo"
+        return 1
+    }
+
+    local checks=()
+    while IFS= read -r c; do [ -n "$c" ] && checks+=("$c"); done < <(discover_checks "$repo" "$branch")
+
+    local checks_json="null"
+    if [ ${#checks[@]} -gt 0 ]; then
+        checks_json=$(printf '%s\n' "${checks[@]}" |
+            python3 -c 'import json,sys; print(json.dumps({"strict":True,"contexts":[l.strip() for l in sys.stdin if l.strip()]}))')
+    fi
+
+    local payload
+    payload=$(python3 -c "
+import json,sys
+checks = json.loads('''$checks_json''') if '''$checks_json''' != 'null' else None
+print(json.dumps({
+  'required_status_checks': checks,
+  'enforce_admins': True,
+  'required_pull_request_reviews': {
+      'dismiss_stale_reviews': True,
+      'require_code_owner_reviews': False,
+      'required_approving_review_count': 1,
+  },
+  'restrictions': None,
+  'allow_force_pushes': False,
+  'allow_deletions': False,
+  'required_conversation_resolution': True,
+}))")
+
+    if [ "$APPLY" = 0 ]; then
+        printf '  %-32s %-6s TORRKORNING: skulle krava %s\n' \
+            "$repo" "$branch" "${checks[*]:-inga checks hittade}"
+        return 0
+    fi
+
+    if printf '%s' "$payload" |
+        gh api -X PUT "repos/$OWNER/$repo/branches/$branch/protection" \
+            --input - >/dev/null 2>&1; then
+        printf '  %-32s %-6s SKYDDAD (checks: %s)\n' \
+            "$repo" "$branch" "${checks[*]:-inga}"
+    else
+        printf '  %-32s %-6s MISSLYCKADES\n' "$repo" "$branch"
+        return 1
+    fi
+}
+
+echo "vvb-repo-guard  (agare: $OWNER, repon: ${#REPOS[@]})"
+if [ "$STATUS_ONLY" = 1 ]; then
+    echo "== nulage =="
+    for r in "${REPOS[@]}"; do show_status "$r"; done
+    exit 0
+fi
+
+[ "$APPLY" = 1 ] && echo "== TILLAMPAR ==" || echo "== TORRKORNING (lagg till --apply for att andra) =="
+fail=0
+for r in "${REPOS[@]}"; do apply_guard "$r" || fail=1; done
+exit "$fail"

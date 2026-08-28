@@ -104,3 +104,29 @@ båda beteendesviterna (25 + 8 fall).
    dokumentation som bara *nämnde* farliga kommandon. Den klipper nu bort
    heredoc-kroppar före matchning, men kontrollerar fortfarande kommandon
    efter avslutaren.
+
+## Versionshanterade skript
+
+Hook- och policyskripten kors fran `~/bin`, men versionshanteras i
+`.jcode/bin/`. De styr en gate som kan blockera verktygsanrop och en policy
+som skyddar sju GitHub-repon, sa en trasig andring maste ga att rulla
+tillbaka.
+
+```bash
+vvb-bin-sync            # kontrollera att repo och ~/bin ar identiska
+vvb-bin-sync --to-repo  # efter en andring i ~/bin
+vvb-bin-sync --to-home  # efter en git pull
+```
+
+Kor `vvb-bin-sync` efter varje andring. En versionshanterad kopia som
+driftat isar fran verkligheten ar varre an ingen kopia alls: historiken
+beskriver da kod som ingen kor.
+
+### Notisfallgrop
+
+`jcode-session-start` matchar **exakt sokvag**, inte glob. Ett tidigare
+monster `*/jcode-audit*` traffade testsvitens temporara `jcode-audit-fake`
+och skickade 20 falska notiser till anvandaren.
+
+Kod som notifierar ska alltid ha ett testlage. Hooken respekterar
+`JCODE_HOOK_TEST=1`, som testsviten satter.

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Testsvit för ~/bin/jcode-tool-policy.
+# Kör: bash ~/bin/jcode-tool-policy-test
+set -uo pipefail
+
+POLICY="$HOME/bin/jcode-tool-policy"
+REPO="${1:-/home/krily/workspace/jcode-audit}"
+pass=0
+fail=0
+
+run() { # run <förväntad exit> <beskrivning> <command-sträng> [tool]
+    local want="$1" desc="$2" cmd="$3" tool="${4:-bash}"
+    local json got
+    json="$(jq -nc --arg c "$cmd" '{command:$c}')"
+    got=0
+    printf '%s' "$json" | JCODE_HOOK_TOOL_NAME="$tool" JCODE_HOOK_CWD="$REPO" \
+        "$POLICY" >/dev/null 2>&1 || got=$?
+    if [ "$got" = "$want" ]; then
+        printf 'ok    (exit %s) %s\n' "$got" "$desc"
+        pass=$((pass + 1))
+    else
+        printf 'FEL   (fick %s, ville %s) %s\n' "$got" "$want" "$desc"
+        fail=$((fail + 1))
+    fi
+}
+
+echo "== ska BLOCKERAS (exit 2) =="
+run 2 "push till origin (upstream 1jehuang)"   "git push origin crab/sv-dropdown"
+run 2 "push -u till origin"                     "git push -u origin master"
+run 2 "rent --force"                            "git push --force fork crab/sv-dropdown"
+run 2 "kort -f"                                 "git push -f fork crab/sv-dropdown"
+run 2 "git reset --hard"                        "git reset --hard HEAD~3"
+run 2 "git clean -fd"                           "git clean -fd"
+run 2 "rm -rf /"                                "rm -rf /"
+run 2 "mkfs"                                    "mkfs.ext4 /dev/sdb1"
+run 2 "dd if="                                  "dd if=/dev/zero of=/dev/sda"
+run 2 "push med explicit refspec till origin"   "git push origin HEAD:master"
+run 2 "push med --set-upstream origin"          "git push --set-upstream origin ny-branch"
+run 2 "farligt kmd EFTER heredoc-avslut"        "$(printf 'cat <<EOF >> fil.md\nnamner git reset --hard\nEOF\ngit clean -fd')"
+run 2 "cd till annat repo med upstream-remote"  "cd $REPO && git push origin main"
+
+echo
+echo "== ska TILLÅTAS (exit 0) =="
+run 0 "push till fork (vvb-1)"                  "git push fork crab/sv-dropdown"
+run 0 "force-with-lease till fork"              "git push --force-with-lease fork crab/sv-dropdown"
+run 0 "vanlig status"                           "git status"
+run 0 "vanlig rebase"                           "git rebase master"
+run 0 "git clean --dry-run"                     "git clean -n"
+run 0 "ofarlig rm"                              "rm -rf /tmp/skrap"
+run 0 "cargo build"                             "cargo build --profile selfdev"
+run 0 "annat verktyg (Read)"                    "git push origin master" "Read"
+run 0 "reset utan --hard"                       "git reset HEAD~1"
+run 0 "push till icke-github"                   "git push gitlab main"
+run 0 "heredoc som NÄMNER git reset --hard"     "$(printf 'cat <<EOF >> doc.md\nAnvand inte git reset --hard har.\nEOF')"
+run 0 "heredoc som nämner rm -rf /"             "$(printf 'cat <<DOC >> doc.md\nrm -rf / ar farligt.\nDOC')"
+run 0 "citerad heredoc-avslutare"               "$(printf "cat <<'EOF' >> doc.md\ngit clean -fd forstor filer.\nEOF")"
+
+# cd-hantering: policyn maste lasa remote fran den katalog kommandot byter
+# till, inte fran sessionens repo. Bygger ett eget repo sa testet inte beror
+# pa nagot som stadats bort.
+tmpclone=$(mktemp -d /tmp/policytest.XXXXXX)/vvb-klon
+mkdir -p "$tmpclone"
+(
+    cd "$tmpclone" || exit 1
+    git init -q .
+    git remote add origin https://github.com/vvb-1/nagot-repo.git
+) >/dev/null 2>&1
+run 0 "cd till vvb-1-repo, push till dess origin" "cd $tmpclone && git push origin HEAD:main"
+rm -rf "$(dirname "$tmpclone")"
+
+echo
+printf 'Resultat: %s ok, %s fel\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]

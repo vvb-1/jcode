@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Verifierar hela jcode-hook-kedjan: config -> filer -> exec-bit -> beteende.
+# Kör efter varje ändring i hooks eller config:  bash ~/bin/jcode-hooks-verify
+set -uo pipefail
+
+CFG="$HOME/.jcode/config.toml"
+fail=0
+
+hr() { printf '\n== %s ==\n' "$1"; }
+
+hr "konfigurerade hooks"
+sed -n '/^\[hooks\]/,/^\[/p' "$CFG" | grep -E '^(pre_tool|post_tool|turn_end|session_start|session_end) *=' || {
+    echo "inga hooks konfigurerade"
+}
+
+hr "filkontroll"
+# Plocka ut varje hookvärde och kontrollera att filen finns och är körbar.
+while IFS= read -r line; do
+    key="${line%%=*}"
+    key="${key// /}"
+    path="${line#*=}"
+    path="$(printf '%s' "$path" | tr -d ' "')"
+    [ -n "$path" ] || continue
+    expanded="${path/#\~/$HOME}"
+    if [ ! -f "$expanded" ]; then
+        printf 'FEL   %-14s saknas: %s\n' "$key" "$expanded"
+        fail=1
+    elif [ ! -x "$expanded" ]; then
+        printf 'FEL   %-14s finns men saknar exec-bit: %s  (chmod +x)\n' "$key" "$expanded"
+        fail=1
+    else
+        printf 'ok    %-14s %s\n' "$key" "$expanded"
+    fi
+done < <(sed -n '/^\[hooks\]/,/^\[/p' "$CFG" | grep -E '^(pre_tool|post_tool|turn_end|session_start|session_end) *=')
+
+hr "beteendetester"
+for t in jcode-tool-policy-test jcode-session-start-test; do
+    if [ -f "$HOME/bin/$t" ]; then
+        out="$(bash "$HOME/bin/$t" 2>&1)"
+        rc=$?
+        printf '%-28s %s\n' "$t" "$(printf '%s' "$out" | tail -1)"
+        [ $rc -eq 0 ] || fail=1
+    fi
+done
+
+hr "resultat"
+if [ "$fail" = 0 ]; then
+    echo "Hela hook-kedjan verifierad: konfigurerad, körbar och beter sig rätt."
+else
+    echo "PROBLEM HITTADE. Se raderna märkta FEL ovan."
+fi
+exit "$fail"

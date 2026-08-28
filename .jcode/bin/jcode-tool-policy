@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# jcode pre_tool gate-hook (VVB).
+#
+# Kontrakt (docs/HOOKS.md):
+#   stdin  = tool input JSON
+#   env    = JCODE_HOOK_TOOL_NAME, JCODE_HOOK_CWD, JCODE_HOOK_SESSION_ID
+#   exit 0 = tillåt
+#   exit 2 = blockera, stderr går tillbaka till modellen som tool-error
+#   annat  = fail-open (jcode loggar varning)
+#
+# Syfte:
+#   1. Hindra push till upstream-remoten (repon där origin inte är vvb-1).
+#   2. Hindra rent `git push --force` (kräver --force-with-lease).
+#   3. Hindra klassiskt destruktiva shell-kommandon.
+#   4. Hindra `git reset --hard` / `git clean -fd` som raderar annans arbete.
+
+set -uo pipefail
+
+input="$(cat)"
+
+deny() {
+    printf '%s\n' "blockerad av VVB tool-policy: $1" >&2
+    exit 2
+}
+
+# Endast bash-verktyget är intressant för de här reglerna.
+case "${JCODE_HOOK_TOOL_NAME:-}" in
+    bash | Bash) ;;
+    *) exit 0 ;;
+esac
+
+# Plocka ut command-fältet ur JSON. jq om det finns, annars grov fallback.
+if command -v jq >/dev/null 2>&1; then
+    cmd="$(printf '%s' "$input" | jq -r '.command // empty' 2>/dev/null)"
+else
+    cmd="$input"
+fi
+[ -n "$cmd" ] || exit 0
+
+# Heredoc-kroppar är data, inte kommandon. Utan detta blockeras t.ex. att
+# skriva dokumentation som *nämner* `git reset --hard`. Klipp bort allt från
+# heredoc-starten till avslutaren innan reglerna körs.
+cmd="$(printf '%s\n' "$cmd" | awk '
+    BEGIN { skip = 0 }
+    skip == 1 {
+        line = $0
+        sub(/^[ \t]+/, "", line)
+        if (line == term) { skip = 0 }
+        next
+    }
+    {
+        print
+        if (match($0, /<<-?[ \t]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/)) {
+            t = substr($0, RSTART, RLENGTH)
+            gsub(/^<<-?[ \t]*/, "", t)
+            gsub(/['"'"'"]/, "", t)
+            term = t
+            skip = 1
+        }
+    }
+')"
+[ -n "$cmd" ] || exit 0
+
+# --- 1. Destruktiva shell-kommandon ------------------------------------------
+if printf '%s' "$cmd" | grep -qE '(^|[;&|[:space:]])rm[[:space:]]+(-[a-zA-Z]*[[:space:]]+)*-?[a-zA-Z]*[rR][a-zA-Z]*f?[a-zA-Z]*[[:space:]]+/([[:space:]]|$)'; then
+    deny "rm -rf mot rotkatalogen"
+fi
+if printf '%s' "$cmd" | grep -qE '(^|[;&|[:space:]])(mkfs(\.[a-z0-9]+)?|dd[[:space:]]+if=)'; then
+    deny "mkfs/dd kan förstöra en enhet, kör manuellt om det verkligen är avsikten"
+fi
+
+# --- 2. Git-regler ------------------------------------------------------------
+printf '%s' "$cmd" | grep -qE '(^|[;&|[:space:]])git([[:space:]]|$)' || exit 0
+
+# 2a. Rent --force vid push. --force-with-lease är alltid tillåtet.
+if printf '%s' "$cmd" | grep -qE 'git[[:space:]].*push' \
+    && printf '%s' "$cmd" | grep -qE '(--force([[:space:]]|$)|[[:space:]]-f([[:space:]]|$))' \
+    && ! printf '%s' "$cmd" | grep -q -- '--force-with-lease'; then
+    deny "git push --force. Använd --force-with-lease i stället."
+fi
+
+# 2b. Historikförstörande kommandon.
+if printf '%s' "$cmd" | grep -qE 'git[[:space:]]+reset[[:space:]]+.*--hard'; then
+    deny "git reset --hard kan radera arbete som inte är ditt. Använd git stash eller git restore."
+fi
+if printf '%s' "$cmd" | grep -qE 'git[[:space:]]+clean[[:space:]]+-[a-zA-Z]*[fd]'; then
+    deny "git clean -fd raderar ospårade filer permanent. Kör med --dry-run först och be användaren bekräfta."
+fi
+
+# 2c. Push till en remote som inte tillhör vvb-1 (upstream-skydd).
+printf '%s' "$cmd" | grep -qE 'git[[:space:]].*push' || exit 0
+
+repo_dir="${JCODE_HOOK_CWD:-$PWD}"
+
+# Kommandot kan byta katalog innan det pushar, t.ex.
+# `cd /tmp/klon && git push origin main`. Utan detta laser policyn remote
+# fran SESSIONENS repo och kan blockera en helt laglig push i ett annat
+# repo (eller, varre, slappa igenom en som borde blockeras).
+cd_target="$(printf '%s' "$cmd" \
+    | grep -oE '(^|[;&|][[:space:]]*)cd[[:space:]]+[^;&|[:space:]]+' \
+    | tail -1 | awk '{print $NF}')"
+if [ -n "$cd_target" ]; then
+    case "$cd_target" in
+        /*) [ -d "$cd_target" ] && repo_dir="$cd_target" ;;
+        *) [ -d "$repo_dir/$cd_target" ] && repo_dir="$repo_dir/$cd_target" ;;
+    esac
+fi
+
+[ -d "$repo_dir" ] || exit 0
+
+# Vilken remote pushar vi till? Explicit namn, annars branchens upstream-remote.
+remote="$(printf '%s' "$cmd" \
+    | grep -oE 'push([[:space:]]+--?[a-zA-Z-]+(=[^[:space:]]+)?)*[[:space:]]+[a-zA-Z0-9._-]+' \
+    | awk '{print $NF}' | head -1)"
+
+if [ -z "$remote" ] || [ "$remote" = "push" ]; then
+    remote="$(git -C "$repo_dir" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null | cut -d/ -f1)"
+    remote="${remote:-origin}"
+fi
+
+url="$(git -C "$repo_dir" remote get-url "$remote" 2>/dev/null)" || exit 0
+[ -n "$url" ] || exit 0
+
+# Tillåt allt som inte är GitHub, och allt som ligger under ett eget konto.
+case "$url" in
+    *github.com*) ;;
+    *) exit 0 ;;
+esac
+
+case "$url" in
+    *[/:]vvb-1/* | *[/:]vvb-1.* ) exit 0 ;;
+esac
+
+deny "push till '$remote' ($url) som inte är ett vvb-1-repo. Detta är sannolikt en upstream-remote. Pusha till forken i stället, eller be Kristian bekräfta uttryckligen."

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Testsvit för ~/bin/jcode-session-start (observer-hook).
+# Kör: bash ~/bin/jcode-session-start-test
+set -uo pipefail
+
+HOOK="$HOME/bin/jcode-session-start"
+LOG="$HOME/.local/state/jcode-events.jsonl"
+pass=0
+fail=0
+
+check() { # check <beskrivning> <villkor-resultat>
+    if [ "$2" = 0 ]; then
+        printf 'ok    %s\n' "$1"
+        pass=$((pass + 1))
+    else
+        printf 'FEL   %s\n' "$1"
+        fail=$((fail + 1))
+    fi
+}
+
+[ -x "$HOOK" ]
+check "hooken är körbar (exec-bit satt)" $?
+
+before=$(wc -l <"$LOG" 2>/dev/null || echo 0)
+
+# Hooken matchar numera EXAKT sokvag, inte glob, sa ett fake-repo i /tmp
+# triggar den inte langre (och ska inte gora det: det gav 20 falska notiser).
+# Testa darfor mot den riktiga sokvagen via en bind-liknande omvag: vi kor
+# hooken med JCODE_HOOK_CWD satt till det verkliga repot.
+REAL_REPO=/home/krily/workspace/jcode-audit
+base=$(mktemp -d /tmp/jcodehooktest.XXXXXX)
+repo="$base/vanligt-repo"
+mkdir -p "$repo"
+(
+    cd "$repo" || exit 1
+    git init -q .
+    git checkout -q -b master
+    echo x >f.txt
+    git add f.txt
+    git -c user.email=t@t -c user.name=t commit -qm init
+) >/dev/null 2>&1
+
+run() { # run <cwd> <id>
+    # JCODE_HOOK_TEST undertrycker skrivbordsnotiser: testsviten ska verifiera
+    # logiken, inte spamma anvandaren. 20 falska notiser skickades innan detta.
+    JCODE_HOOK_TEST=1 JCODE_HOOK_EVENT=session_start JCODE_HOOK_CWD="$1" \
+        JCODE_HOOK_PAYLOAD="{\"event\":\"session_start\",\"id\":\"$2\"}" \
+        "$HOOK" >/dev/null 2>&1
+}
+
+run "$repo" t_other
+check "okant repo ger exit 0" $?
+
+new=$(tail -n +$((before + 1)) "$LOG" 2>/dev/null)
+! grep -q '"warn":"wrong_branch"' <<<"$new"
+check "okant repo i /tmp triggar INTE branch-varning (var 20 falska notiser)" $?
+
+# Det riktiga repot: hooken ska kanna igen sokvagen. Star det pa ratt
+# branch ska ingen varning ges.
+before2=$(wc -l <"$LOG")
+run "$REAL_REPO" t_real
+real_branch=$(git -C "$REAL_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)
+newlines=$(tail -n +$((before2 + 1)) "$LOG")
+if [ "$real_branch" = "crab/sv-dropdown" ]; then
+    ! grep -q '"warn":"wrong_branch"' <<<"$newlines"
+    check "riktigt repo pa ratt branch varnar INTE" $?
+else
+    grep -q '"warn":"wrong_branch"' <<<"$newlines"
+    check "riktigt repo pa fel branch varnar" $?
+fi
+
+run /tmp t_nongit
+check "icke-git-katalog avslutar tyst med 0" $?
+
+run /finns/inte t_missing
+check "obefintlig katalog avslutar tyst med 0" $?
+
+# Varje ny loggrad måste vara giltig JSON.
+bad=0
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    jq -e . >/dev/null 2>&1 <<<"$line" || bad=1
+done < <(tail -n +$((before + 1)) "$LOG")
+[ "$bad" = 0 ]
+check "alla loggrader är giltig JSON" $?
+
+rm -rf "$base"
+
+echo
+printf 'Resultat: %s ok, %s fel\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]

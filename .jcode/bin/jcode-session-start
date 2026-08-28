@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# jcode session_start-hook (VVB).
+# Observer: kan aldrig blockera, körs detached. Loggar sessionsstart och
+# varnar via desktop-notis om ett känt custom-branch-repo står på fel branch.
+
+set -uo pipefail
+
+log="$HOME/.local/state/jcode-events.jsonl"
+mkdir -p "$(dirname "$log")"
+# OBS: skriv inte ${VAR:-{}} här. Bash tolkar klammern fel och lägger till en
+# extra } så raden blir ogiltig JSON. Testa med jq efter varje ändring.
+payload="${JCODE_HOOK_PAYLOAD:-}"
+[ -n "$payload" ] || payload='{}'
+printf '%s\n' "$payload" >>"$log"
+
+cwd="${JCODE_HOOK_CWD:-$PWD}"
+[ -d "$cwd" ] || exit 0
+
+git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1 || exit 0
+
+branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+[ -n "$branch" ] || exit 0
+
+# Repon där arbetet ska ske på en custom-branch, inte på master/main.
+#
+# Matcha EXAKT sökväg, inte glob. Mönstret */jcode-audit* träffade även
+# testsvitens temporära /tmp/.../jcode-audit-fake och skickade 20 falska
+# notiser till användaren. Ett larm som ropar om fel sak lär användaren
+# att ignorera larm.
+case "$cwd" in
+    /home/krily/workspace/jcode-audit) want="crab/sv-dropdown" ;;
+    *) exit 0 ;;
+esac
+
+# Testläge: testsviten sätter denna för att verifiera logiken utan att
+# skicka riktiga skrivbordsnotiser.
+notify() {
+    [ -n "${JCODE_HOOK_TEST:-}" ] && return 0
+    notify-send -u critical "$1" "$2" 2>/dev/null
+}
+
+if [ "$branch" != "$want" ]; then
+    notify "jcode: fel branch" \
+        "$(basename "$cwd") står på '$branch', arbetet ska ske på '$want'."
+    printf '%s\n' "{\"warn\":\"wrong_branch\",\"cwd\":\"$cwd\",\"branch\":\"$branch\",\"want\":\"$want\"}" >>"$log"
+fi
+
+# Ocommittat arbete vid sessionsstart är värt att veta om.
+if [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]; then
+    printf '%s\n' "{\"warn\":\"dirty_tree\",\"cwd\":\"$cwd\",\"branch\":\"$branch\"}" >>"$log"
+fi
+
+exit 0
