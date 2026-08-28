@@ -155,11 +155,29 @@ impl Tool for MemoryTool {
                 if let Some(tags) = input.tags {
                     entry = entry.with_tags(tags);
                 }
+                // `remember_*` deduplicates semantically: a near-identical
+                // memory is reinforced and its existing id returned instead of
+                // storing the new text. Reporting "Remembered" either way lies
+                // to the caller, who may then believe a consolidation or
+                // correction landed when the old wording is still in place.
+                // Snapshot the ids first so the two cases can be told apart.
+                let ids_before: std::collections::HashSet<String> = manager
+                    .list_all_scoped(if scope == "global" {
+                        MemoryScope::Global
+                    } else {
+                        MemoryScope::Project
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| m.id)
+                    .collect();
+
                 let id = if scope == "global" {
                     manager.remember_global(entry)?
                 } else {
                     manager.remember_project(entry)?
                 };
+                let deduplicated = ids_before.contains(&id);
                 // The agent just wrote this memory itself; the content is in
                 // the transcript (tool call + result), so auto-recall should
                 // not inject it back into this session.
@@ -174,10 +192,19 @@ impl Tool for MemoryTool {
                     category: category.to_string(),
                 });
                 memory::set_state(MemoryState::Idle);
-                Ok(ToolOutput::new(format!(
-                    "Remembered {} ({}): \"{}\" [id: {}]",
-                    category, scope, content, id
-                )))
+                if deduplicated {
+                    Ok(ToolOutput::new(format!(
+                        "NOT stored: a near-identical memory already exists, so it was \
+                         reinforced instead and your text was discarded ({}, {}) [id: {}]. \
+                         To replace the old wording, forget that id first, then remember again.",
+                        category, scope, id
+                    )))
+                } else {
+                    Ok(ToolOutput::new(format!(
+                        "Remembered {} ({}): \"{}\" [id: {}]",
+                        category, scope, content, id
+                    )))
+                }
             }
             "recall" => {
                 let limit = input.limit.unwrap_or(10);
