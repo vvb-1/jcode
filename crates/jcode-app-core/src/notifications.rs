@@ -661,6 +661,36 @@ pub fn send_desktop_notification(title: &str, body: &str) {
     send_desktop_notification_rich(title, None, body, None);
 }
 
+/// Spawn a fire-and-forget notifier child and reap it.
+///
+/// A spawned child that is never waited on stays in the process table as a
+/// zombie for the lifetime of the parent. jcode is long-lived, so notifier
+/// zombies accumulate one per notification; a `jcode selfdev` session was
+/// observed holding several after a few hours. `Command::spawn` alone does not
+/// detach the child from the parent in the POSIX sense, so the reap has to be
+/// explicit. Waiting happens on a short-lived detached thread so notification
+/// sending never blocks the caller.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn spawn_and_reap(command: &mut std::process::Command) -> std::io::Result<()> {
+    let child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    std::thread::Builder::new()
+        .name("notify-reaper".to_string())
+        .spawn(move || {
+            let mut child = child;
+            let _ = child.wait();
+        })
+        .map(|_| ())
+        .or_else(|_| {
+            // Thread spawn failed: better to block briefly than leak a zombie.
+            Ok(())
+        })
+}
+
 /// Send a local desktop notification with optional macOS subtitle and sound.
 ///
 /// `subtitle` renders as a second bold line on macOS (ignored elsewhere).
@@ -698,25 +728,21 @@ pub fn send_desktop_notification_rich(
         if let Some(sound) = sound.filter(|s| !s.trim().is_empty()) {
             script.push_str(&format!(" sound name \"{}\"", applescript_escape(sound)));
         }
-        let _ = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+        let _ = spawn_and_reap(
+            std::process::Command::new("osascript")
+                .arg("-e")
+                .arg(script),
+        );
     }
     #[cfg(target_os = "linux")]
     {
         let _ = (subtitle, sound);
-        let _ = std::process::Command::new("notify-send")
-            .arg("--app-name=jcode")
-            .arg(title)
-            .arg(body)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+        let _ = spawn_and_reap(
+            std::process::Command::new("notify-send")
+                .arg("--app-name=jcode")
+                .arg(title)
+                .arg(body),
+        );
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -1148,5 +1174,61 @@ mod tests {
         let decoded: MacosNotificationEnvelope =
             serde_json::from_slice(&encoded).expect("decode envelope");
         assert_eq!(decoded, envelope);
+    }
+}
+
+#[cfg(test)]
+mod notify_reaper_tests {
+    /// Ett barn som aldrig wait:as blir en zombie som lever kvar tills
+    /// foraldern dor. jcode ar langlivad, sa varje notis lackte en process.
+    /// Testet bevisar att spawn_and_reap faktiskt skordar barnet.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn spawn_and_reap_lamnar_ingen_zombie() {
+        use std::process::Command;
+
+        fn zombie_children() -> usize {
+            let me = std::process::id();
+            let Ok(entries) = std::fs::read_dir("/proc") else {
+                return 0;
+            };
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else {
+                        return false;
+                    };
+                    // stat: pid (comm) state ppid ...  comm kan innehalla
+                    // mellanslag, sa dela efter sista ')'.
+                    let Some(rest) = stat.rsplit(')').next() else {
+                        return false;
+                    };
+                    let mut f = rest.split_whitespace();
+                    let state = f.next().unwrap_or("");
+                    let ppid: u32 = f.next().unwrap_or("0").parse().unwrap_or(0);
+                    state == "Z" && ppid == me
+                })
+                .count()
+        }
+
+        let before = zombie_children();
+
+        for _ in 0..5 {
+            super::spawn_and_reap(&mut Command::new("true")).expect("spawn true");
+        }
+
+        // Reaper-tradarna far en kort stund att skorda.
+        for _ in 0..50 {
+            if zombie_children() <= before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let after = zombie_children();
+        assert!(
+            after <= before,
+            "spawn_and_reap lamnade zombies kvar: fore={before}, efter={after}"
+        );
     }
 }
