@@ -91,7 +91,41 @@ bash ~/bin/jcode-hooks-verify
 ```
 
 Den kontrollerar config, att skripten finns, att exec-biten är satt, och kör
-båda beteendesviterna (25 + 8 fall).
+båda beteendesviterna (31 + 7 fall).
+
+### På VVB-DEV (Windows) körs hookarna i WSL
+
+Här är jcode en **Windows**-binär medan hookarna är bash-skript i **WSL**.
+Det gav fyra fel som alla såg ut som fungerande konfiguration. Grinden
+rapporterade aldrig något, den släppte bara igenom allt.
+
+Konfigurationen måste gå via wrappern, inte direkt till `wsl.exe`:
+
+```toml
+pre_tool = ["C:/Users/Dev/.jcode/verktyg/kor-hook.cmd jcode-tool-policy"]
+session_start = ["C:/Users/Dev/.jcode/verktyg/kor-hook.cmd jcode-session-start"]
+```
+
+1. **WSL vidarebefordrar inte Windows-miljövariabler.** Utan `WSLENV` såg
+   skriptet ett tomt `JCODE_HOOK_TOOL_NAME`, föll ur på sin `case`-rad och
+   svarade exit 0. Wrappern `kor-hook.cmd` sätter `WSLENV`.
+2. **`JCODE_HOOK_CWD` kommer som `C:\...`.** `[ -d ]` hittar den aldrig, så
+   policyn föll ur på sin egen skyddsrad. Skripten kör nu `wslpath -u`.
+3. **jq fanns inte i PATH.** Hooken startas inte av ett inloggningsskal, så
+   `~/.profile` körs aldrig och `~/.local/bin` saknas. Skriptet lägger nu
+   till sökvägen själv, och fallbacken utan jq extraherar `.command` med sed
+   i stället för att låta hela JSON-strängen passera som kommando.
+4. **CRLF gör skripten okörbara.** Lagrades de med CRLF gav bash
+   `syntax error near unexpected token $'in\r'`. `.gitattributes` tvingar nu
+   LF för `.jcode/bin/*`. Kontrollera efter varje redigering från Windows,
+   flera editorer återinför CRLF.
+
+Verifiera alltid med ett **skarpt** anrop, inte bara testsviten:
+
+```bash
+git reset --hard HEAD    # ska ge "Tool call blocked by pre_tool hook"
+git status               # ska fungera normalt
+```
 
 ### Fallgropar som faktiskt inträffade 2026-08-27
 

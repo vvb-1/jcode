@@ -3,7 +3,23 @@
 # Kör efter varje ändring i hooks eller config:  bash ~/bin/jcode-hooks-verify
 set -uo pipefail
 
-CFG="$HOME/.jcode/config.toml"
+# Configens plats skiljer sig mellan maskiner. Pa VVB-DEV kors jcode som
+# Windows-process, sa configen ligger under Windows-hemmet och INTE under
+# WSL:s $HOME. Utan detta rapporterade verifieraren "inga hooks
+# konfigurerade" trots att grinden var korrekt uppsatt och aktiv.
+CFG="${JCODE_CONFIG:-}"
+if [ -z "$CFG" ]; then
+    for candidate in "$HOME/.jcode/config.toml" /mnt/c/Users/*/.jcode/config.toml; do
+        [ -f "$candidate" ] && CFG="$candidate" && break
+    done
+fi
+CFG="${CFG:-$HOME/.jcode/config.toml}"
+printf 'config: %s\n' "$CFG"
+
+# Repot vars remotes policyn ska las. Harleds fran skriptets egen plats sa
+# att verifieraren fungerar pa alla maskiner.
+REPO="${JCODE_REPO_DIR:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)}"
+
 fail=0
 
 hr() { printf '\n== %s ==\n' "$1"; }
@@ -18,14 +34,29 @@ hr "filkontroll"
 while IFS= read -r line; do
     key="${line%%=*}"
     key="${key// /}"
-    path="${line#*=}"
-    path="$(printf '%s' "$path" | tr -d ' "')"
+    value="${line#*=}"
+    # Vardet kan vara en TOML-lista och kan innehalla argument:
+    #   pre_tool = ["C:/.../kor-hook.cmd jcode-tool-policy"]
+    # Att bara strippa citattecken och blanksteg klistrade ihop program och
+    # argument till en sokvag som aldrig finns, vilket gav falskt FEL for en
+    # korrekt konfigurerad hook.
+    value="$(printf '%s' "$value" | tr -d '[]')"
+    value="${value%%,*}"
+    value="$(printf '%s' "$value" | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')"
+    path="${value%% *}"
     [ -n "$path" ] || continue
     expanded="${path/#\~/$HOME}"
+    # Windows-sokvag i configen nar verifieraren kors under WSL.
+    case "$expanded" in
+        [A-Za-z]:[/\\]*)
+            command -v wslpath >/dev/null 2>&1 &&
+                expanded="$(wslpath -u "$expanded" 2>/dev/null || printf '%s' "$expanded")"
+            ;;
+    esac
     if [ ! -f "$expanded" ]; then
         printf 'FEL   %-14s saknas: %s\n' "$key" "$expanded"
         fail=1
-    elif [ ! -x "$expanded" ]; then
+    elif [ ! -x "$expanded" ] && ! printf '%s' "$expanded" | grep -qiE '\.(cmd|bat|exe)$'; then
         printf 'FEL   %-14s finns men saknar exec-bit: %s  (chmod +x)\n' "$key" "$expanded"
         fail=1
     else
@@ -36,7 +67,7 @@ done < <(sed -n '/^\[hooks\]/,/^\[/p' "$CFG" | grep -E '^(pre_tool|post_tool|tur
 hr "beteendetester"
 for t in jcode-tool-policy-test jcode-session-start-test; do
     if [ -f "$HOME/bin/$t" ]; then
-        out="$(bash "$HOME/bin/$t" 2>&1)"
+        out="$(JCODE_HOOK_TEST=1 bash "$HOME/bin/$t" "$REPO" 2>&1)"
         rc=$?
         printf '%-28s %s\n' "$t" "$(printf '%s' "$out" | tail -1)"
         [ $rc -eq 0 ] || fail=1
