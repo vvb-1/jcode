@@ -27,7 +27,12 @@ before=$(wc -l <"$LOG" 2>/dev/null || echo 0)
 # triggar den inte langre (och ska inte gora det: det gav 20 falska notiser).
 # Testa darfor mot den riktiga sokvagen via en bind-liknande omvag: vi kor
 # hooken med JCODE_HOOK_CWD satt till det verkliga repot.
-REAL_REPO=/home/krily/workspace/jcode-audit
+#
+# Sokvagen skiljer sig mellan maskiner, sa harda inte in en. Harled den fran
+# repot testet sjalvt ligger i. En hardkodad sokvag fran en annan maskin gjorde
+# tidigare att testet foll ner i else-grenen och rapporterade FEL har.
+REAL_REPO=${JCODE_REPO_DIR:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)}
+REAL_REPO=${REAL_REPO:-/home/krily/workspace/jcode-audit}
 base=$(mktemp -d /tmp/jcodehooktest.XXXXXX)
 repo="$base/vanligt-repo"
 mkdir -p "$repo"

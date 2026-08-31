@@ -27,8 +27,14 @@ branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 # testsvitens temporära /tmp/.../jcode-audit-fake och skickade 20 falska
 # notiser till användaren. Ett larm som ropar om fel sak lär användaren
 # att ignorera larm.
+#
+# Forken är utcheckad på flera maskiner. Sökvägarna skiljer sig, så varje
+# maskin behöver sin egen rad. En sökväg som bara finns på en annan maskin
+# gör vakten tyst overksam här, vilket är precis det larm-som-inte-larmar
+# som kommentaren ovan varnar för.
 case "$cwd" in
     /home/krily/workspace/jcode-audit) want="crab/sv-dropdown" ;;
+    /mnt/c/Users/Dev/.jcode/source/jcode) want="crab/sv-dropdown" ;;
     *) exit 0 ;;
 esac
 

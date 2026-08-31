@@ -1,0 +1,2 @@
+# VVB: hook- och policyskript kors av bash och maste ha LF, aven pa Windows.
+.jcode/bin/* text eol=lf
