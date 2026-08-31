@@ -14,6 +14,17 @@ payload="${JCODE_HOOK_PAYLOAD:-}"
 printf '%s\n' "$payload" >>"$log"
 
 cwd="${JCODE_HOOK_CWD:-$PWD}"
+
+# Se kommentaren i jcode-tool-policy: Windows-jcode skickar 'C:\...' till
+# WSL-bash, vilket gor branch-vakten tyst overksam.
+case "$cwd" in
+    [A-Za-z]:[/\\]*)
+        if command -v wslpath >/dev/null 2>&1; then
+            cwd="$(wslpath -u "$cwd" 2>/dev/null || printf '%s' "$cwd")"
+        fi
+        ;;
+esac
+
 [ -d "$cwd" ] || exit 0
 
 git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1 || exit 0
