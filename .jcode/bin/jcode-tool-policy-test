@@ -11,7 +11,20 @@ fail=0
 run() { # run <förväntad exit> <beskrivning> <command-sträng> [tool]
     local want="$1" desc="$2" cmd="$3" tool="${4:-bash}"
     local json got
-    json="$(jq -nc --arg c "$cmd" '{command:$c}')"
+    # Bygg payloaden utan jq om jq saknas. Annars blev json tom, policyn fick
+    # tom stdin och svarade exit 0, vilket sag ut som att 13 skyddsregler var
+    # trasiga fast det var testet som inte kunde koras.
+    if command -v jq >/dev/null 2>&1; then
+        json="$(jq -nc --arg c "$cmd" '{command:$c}')"
+    else
+        local esc
+        # Radbrytningar MASTE kodas som \n. En rad nyrad i en JSON-strang ar
+        # ogiltig JSON, och fick heredoc-fallet att se ut som en trasig regel.
+        esc=$(printf '%s' "$cmd" \
+            | sed 's/\\/\\\\/g; s/"/\\"/g' \
+            | sed ':a;N;$!ba;s/\n/\\n/g')
+        json="{\"command\":\"$esc\"}"
+    fi
     got=0
     printf '%s' "$json" | JCODE_HOOK_TOOL_NAME="$tool" JCODE_HOOK_CWD="$REPO" \
         "$POLICY" >/dev/null 2>&1 || got=$?

@@ -16,6 +16,17 @@
 
 set -uo pipefail
 
+# Hooken startas av jcode, inte av ett inloggningsskal, sa ~/.profile korts
+# aldrig och $HOME/.local/bin saknas i PATH. Da hittades inte jq, och
+# fallbacken nedan lat hela JSON-strangen passera som "kommando" vilket
+# fick alla regexar att missa. Resultat: grinden slappte igenom en push
+# till upstream. Lagg darfor till sokvagen explicit.
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) PATH="$HOME/.local/bin:$PATH" ;;
+esac
+export PATH
+
 input="$(cat)"
 
 deny() {
@@ -33,7 +44,14 @@ esac
 if command -v jq >/dev/null 2>&1; then
     cmd="$(printf '%s' "$input" | jq -r '.command // empty' 2>/dev/null)"
 else
-    cmd="$input"
+    # Utan jq: plocka ut .command med sed och av-escapa. Att som tidigare
+    # anvanda hela JSON-strangen ar inte en konservativ fallback, det ar en
+    # tyst avstangning av alla regler, eftersom citattecken och \u003e gor
+    # att monstren aldrig matchar.
+    cmd="$(printf '%s' "$input" \
+        | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+        | sed 's/\\n/\n/g; s/\\t/\t/g; s/\\"/"/g; s/\\\\/\\/g')"
+    [ -n "$cmd" ] || cmd="$input"
 fi
 [ -n "$cmd" ] || exit 0
 
