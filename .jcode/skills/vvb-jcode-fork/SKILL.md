@@ -53,6 +53,32 @@ Exempel: upstream lade till `/update-sim`, vilket blev
 Checklista: jämför antalet `RegisteredCommand::`-rader före och efter. Blir
 det färre har ett upstream-kommando fallit bort.
 
+**Hjälptexter finns på TVÅ ställen.** Den statiska tabellen
+`REGISTERED_COMMANDS` är bara hälften. Underkommandonas texter byggs på plats
+i `get_suggestions_for()`:
+
+```rust
+("/memory on".into(), "Slå på minne för den här sessionen"),
+```
+
+Den ursprungliga i18n-patchen tog bara tabellen, så 102 texter stod kvar på
+engelska mitt i en svensk meny. Rustfmt bryter dessutom långa poster över två
+rader, vilket kräver ett andra sökmönster:
+
+```rust
+(
+    "/selfdev enter ".into(),
+    "Öppna en self-dev-session med en prompt",
+),
+```
+
+Kontrollera efter varje rebase att inga engelska hjälptexter smugit in:
+
+```bash
+grep -nE '"/[^"]+"[[:space:]]*\.into\(\)' \
+  crates/jcode-tui/src/tui/app/state_ui_input_helpers.rs
+```
+
 ### `src/cli/selfdev.rs`
 Upstream ändrar signaturen på `run_tui_client`. Vår patch skickar
 `selfdev_remote_working_dir(&repo_dir)` som `remote_working_dir` i stället för
