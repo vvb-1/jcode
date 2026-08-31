@@ -600,7 +600,7 @@ impl App {
 
             let suggestions = self.model_suggestion_candidates();
             if suggestions.is_empty() {
-                return vec![("/model".into(), "Open model picker")];
+                return vec![("/model".into(), "Öppna modellväljaren")];
             }
             return self.rank_suggestions(input, suggestions);
         }
@@ -609,14 +609,11 @@ impl App {
             return self.rank_suggestions(
                 input,
                 vec![
-                    ("/agents swarm".into(), "Configure swarm/subagent model"),
-                    ("/agents review".into(), "Configure code review model"),
-                    ("/agents judge".into(), "Configure judge model"),
-                    (
-                        "/agents memory".into(),
-                        "Configure optional memory extraction model",
-                    ),
-                    ("/agents ambient".into(), "Configure ambient model"),
+                    ("/agents swarm".into(), "Konfigurera modell för swarm/underagent"),
+                    ("/agents review".into(), "Konfigurera modell för kodgranskning"),
+                    ("/agents judge".into(), "Konfigurera modell för bedömare"),
+                    ("/agents memory".into(), "Konfigurera valfri modell för minnesextraktion"),
+                    ("/agents ambient".into(), "Konfigurera modell för ambient"),
                 ],
             );
         }
@@ -627,11 +624,11 @@ impl App {
                 vec![
                     (
                         "/subagent-model inherit".into(),
-                        "Use the current active model",
+                        "Använd den aktiva modellen",
                     ),
                     (
                         "/subagent-model show".into(),
-                        "Show the current subagent model policy",
+                        "Visa aktuell modellpolicy för underagenter",
                     ),
                 ],
             );
@@ -643,11 +640,11 @@ impl App {
                 vec![
                     (
                         "/autoreview status".into(),
-                        "Show current autoreview status",
+                        "Visa aktuell status för automatisk granskning",
                     ),
-                    ("/autoreview on".into(), "Enable end-of-turn autoreview"),
-                    ("/autoreview off".into(), "Disable end-of-turn autoreview"),
-                    ("/autoreview now".into(), "Launch a reviewer immediately"),
+                    ("/autoreview on".into(), "Slå på automatisk granskning vid turslut"),
+                    ("/autoreview off".into(), "Stäng av automatisk granskning vid turslut"),
+                    ("/autoreview now".into(), "Starta en granskare direkt"),
                 ],
             );
         }
@@ -656,11 +653,11 @@ impl App {
             return vec![
                 (
                     "/autoreview status".into(),
-                    "Show current autoreview status",
+                    "Visa aktuell status för automatisk granskning",
                 ),
-                ("/autoreview on".into(), "Enable end-of-turn autoreview"),
-                ("/autoreview off".into(), "Disable end-of-turn autoreview"),
-                ("/autoreview now".into(), "Launch a reviewer immediately"),
+                ("/autoreview on".into(), "Slå på automatisk granskning vid turslut"),
+                ("/autoreview off".into(), "Stäng av automatisk granskning vid turslut"),
+                ("/autoreview now".into(), "Starta en granskare direkt"),
             ];
         }
 
@@ -668,54 +665,54 @@ impl App {
             return self.rank_suggestions(
                 input,
                 vec![
-                    ("/autojudge status".into(), "Show current autojudge status"),
-                    ("/autojudge on".into(), "Enable end-of-turn autojudge"),
-                    ("/autojudge off".into(), "Disable end-of-turn autojudge"),
-                    ("/autojudge now".into(), "Launch a judge immediately"),
+                    ("/autojudge status".into(), "Visa aktuell status för autobedömning"),
+                    ("/autojudge on".into(), "Slå på automatisk bedömning vid turslut"),
+                    ("/autojudge off".into(), "Stäng av automatisk bedömning vid turslut"),
+                    ("/autojudge now".into(), "Starta en bedömare direkt"),
                 ],
             );
         }
 
         if prefix_trimmed == "/autojudge" {
             return vec![
-                ("/autojudge status".into(), "Show current autojudge status"),
-                ("/autojudge on".into(), "Enable end-of-turn autojudge"),
-                ("/autojudge off".into(), "Disable end-of-turn autojudge"),
-                ("/autojudge now".into(), "Launch a judge immediately"),
+                ("/autojudge status".into(), "Visa aktuell status för autobedömning"),
+                ("/autojudge on".into(), "Slå på automatisk bedömning vid turslut"),
+                ("/autojudge off".into(), "Stäng av automatisk bedömning vid turslut"),
+                ("/autojudge now".into(), "Starta en bedömare direkt"),
             ];
         }
 
         if prefix.starts_with("/review ") {
             return self.rank_suggestions(
                 input,
-                vec![("/review".into(), "Launch a one-shot review immediately")],
+                vec![("/review".into(), "Starta en engångsgranskning direkt")],
             );
         }
 
         if prefix_trimmed == "/review" {
-            return vec![("/review".into(), "Launch a one-shot review immediately")];
+            return vec![("/review".into(), "Starta en engångsgranskning direkt")];
         }
 
         if prefix.starts_with("/judge ") {
             return self.rank_suggestions(
                 input,
-                vec![("/judge".into(), "Launch a one-shot judge immediately")],
+                vec![("/judge".into(), "Starta en engångsbedömning direkt")],
             );
         }
 
         if prefix_trimmed == "/judge" {
-            return vec![("/judge".into(), "Launch a one-shot judge immediately")];
+            return vec![("/judge".into(), "Starta en engångsbedömning direkt")];
         }
 
         if prefix_trimmed == "/subagent-model" {
             return vec![
                 (
                     "/subagent-model show".into(),
-                    "Show the current subagent model policy",
+                    "Visa aktuell modellpolicy för underagenter",
                 ),
                 (
                     "/subagent-model inherit".into(),
-                    "Use the current active model",
+                    "Använd den aktiva modellen",
                 ),
             ];
         }
@@ -726,31 +723,31 @@ impl App {
                 vec![
                     (
                         "/subagent --type general ".into(),
-                        "Launch a general-purpose subagent",
+                        "Starta en allmän underagent",
                     ),
                     (
                         "/subagent --model ".into(),
-                        "Launch a subagent with an explicit model",
+                        "Starta en underagent med angiven modell",
                     ),
                     (
                         "/subagent --continue ".into(),
-                        "Resume an existing subagent session",
+                        "Återuppta en befintlig underagentsession",
                     ),
                 ],
             );
         }
 
         if prefix_trimmed == "/subagent" {
-            return vec![("/subagent ".into(), "Launch a subagent with a prompt")];
+            return vec![("/subagent ".into(), "Starta en underagent med en prompt")];
         }
 
         // /model opens the interactive picker, and `/model <name>` supports direct completion.
         if prefix_trimmed == "/model" || prefix_trimmed == "/models" {
-            return vec![("/model".into(), "Open model picker or type `/model <name>`")];
+            return vec![("/model".into(), "Öppna modellväljaren eller skriv `/model <namn>`")];
         }
 
         if prefix_trimmed == "/agents" {
-            return vec![("/agents".into(), "Open agent model config picker")];
+            return vec![("/agents".into(), "Öppna väljaren för agentmodeller")];
         }
 
         if prefix.starts_with("/help ") || prefix.starts_with("/? ") {
@@ -796,12 +793,12 @@ impl App {
         if prefix.starts_with("/git ") {
             return self.rank_suggestions(
                 input,
-                vec![("/git status".into(), "Show branch and working tree status")],
+                vec![("/git status".into(), "Visa branch och arbetskatalogens status")],
             );
         }
 
         if prefix_trimmed == "/git" {
-            return vec![("/git status".into(), "Show branch and working tree status")];
+            return vec![("/git status".into(), "Visa branch och arbetskatalogens status")];
         }
 
         if prefix.starts_with("/transcript ") {
@@ -809,7 +806,7 @@ impl App {
                 input,
                 vec![(
                     "/transcript path".into(),
-                    "Print transcript path without opening",
+                    "Skriv ut sökväg till utskrift utan att öppna",
                 )],
             );
         }
@@ -817,7 +814,7 @@ impl App {
         if prefix_trimmed == "/transcript" {
             return vec![(
                 "/transcript path".into(),
-                "Print transcript path without opening",
+                "Skriv ut sökväg till utskrift utan att öppna",
             )];
         }
 
@@ -870,14 +867,14 @@ impl App {
 
         if prefix.starts_with("/compact ") {
             let suggestions = vec![
-                ("/compact mode".into(), "Show/change compaction mode"),
+                ("/compact mode".into(), "Visa eller ändra komprimeringsläge"),
                 (
                     "/compact mode status".into(),
-                    "Show the current compaction mode",
+                    "Visa aktuellt komprimeringsläge",
                 ),
-                ("/compact mode reactive".into(), "Use reactive compaction"),
-                ("/compact mode proactive".into(), "Use proactive compaction"),
-                ("/compact mode semantic".into(), "Use semantic compaction"),
+                ("/compact mode reactive".into(), "Använd reaktiv komprimering"),
+                ("/compact mode proactive".into(), "Använd proaktiv komprimering"),
+                ("/compact mode semantic".into(), "Använd semantisk komprimering"),
             ];
             return self.rank_suggestions(input, suggestions);
         }
@@ -886,7 +883,7 @@ impl App {
             let modes = ["reactive", "proactive", "semantic"];
             let mut suggestions: Vec<(String, &'static str)> = vec![(
                 "/compact mode status".into(),
-                "Show the current compaction mode",
+                "Visa aktuellt komprimeringsläge",
             )];
             suggestions.extend(
                 modes
@@ -898,11 +895,11 @@ impl App {
 
         if prefix.starts_with("/cache ") {
             let suggestions = vec![
-                ("/cache stats".into(), "Show KV cache stats"),
-                ("/cache status".into(), "Alias for /cache stats"),
-                ("/cache extend".into(), "Save 1 hour Anthropic cache TTL"),
-                ("/cache 1h".into(), "Save 1 hour Anthropic cache TTL"),
-                ("/cache 5m".into(), "Save 5 minute Anthropic cache TTL"),
+                ("/cache stats".into(), "Visa statistik för KV-cachen"),
+                ("/cache status".into(), "Alias för /cache stats"),
+                ("/cache extend".into(), "Spara 1 timmes Anthropic-cache-TTL"),
+                ("/cache 1h".into(), "Spara 1 timmes Anthropic-cache-TTL"),
+                ("/cache 5m".into(), "Spara 5 minuters Anthropic-cache-TTL"),
             ];
             return self.rank_suggestions(input, suggestions);
         }
@@ -915,7 +912,7 @@ impl App {
             };
             let mut suggestions: Vec<(String, &'static str)> = Vec::new();
             if base == "/auth" {
-                suggestions.push(("/auth doctor".into(), "Diagnose provider auth issues"));
+                suggestions.push(("/auth doctor".into(), "Diagnostisera inloggningsproblem hos provider"));
             }
             suggestions.extend(
                 crate::provider_catalog::tui_login_providers()
@@ -927,23 +924,23 @@ impl App {
 
         if prefix.starts_with("/account ") || prefix.starts_with("/accounts ") {
             let mut suggestions = vec![
-                ("/account list".into(), "Open all provider/account actions"),
-                ("/account switch".into(), "Switch active account by label"),
+                ("/account list".into(), "Öppna alla konto- och provideråtgärder"),
+                ("/account switch".into(), "Byt aktivt konto via etikett"),
                 (
                     "/account default-provider".into(),
-                    "Set preferred default provider",
+                    "Ange föredragen standardprovider",
                 ),
                 (
                     "/account default-model".into(),
-                    "Set preferred default model",
+                    "Ange föredragen standardmodell",
                 ),
                 (
                     "/account openai-compatible settings".into(),
-                    "Inspect custom OpenAI-compatible settings",
+                    "Granska egna OpenAI-kompatibla inställningar",
                 ),
                 (
                     "/account openai-compatible api-base".into(),
-                    "Set custom OpenAI-compatible API base",
+                    "Ange egen OpenAI-kompatibel API-bas",
                 ),
             ];
             for provider in crate::provider_catalog::login_providers() {
@@ -960,15 +957,15 @@ impl App {
                     "Start or refresh login for this provider",
                 ));
             }
-            suggestions.push(("/account claude add".into(), "Add a new Claude account"));
-            suggestions.push(("/account openai add".into(), "Add a new OpenAI account"));
+            suggestions.push(("/account claude add".into(), "Lägg till ett nytt Claude-konto"));
+            suggestions.push(("/account openai add".into(), "Lägg till ett nytt OpenAI-konto"));
             suggestions.push((
                 "/account openai transport".into(),
-                "Set OpenAI transport preference",
+                "Ange transportval för OpenAI",
             ));
             suggestions.push((
                 "/account openai effort".into(),
-                "Set OpenAI reasoning effort preference",
+                "Ange resonemangsnivå för OpenAI",
             ));
             if let Ok(accounts) = crate::auth::claude::list_accounts() {
                 for account in accounts {
@@ -993,9 +990,9 @@ impl App {
             return self.rank_suggestions(
                 input,
                 vec![
-                    ("/memory on".into(), "Enable memory for this session"),
-                    ("/memory off".into(), "Disable memory for this session"),
-                    ("/memory status".into(), "Show memory feature status"),
+                    ("/memory on".into(), "Slå på minne för den här sessionen"),
+                    ("/memory off".into(), "Stäng av minne för den här sessionen"),
+                    ("/memory status".into(), "Visa status för minnesfunktionen"),
                 ],
             );
         }
@@ -1006,19 +1003,19 @@ impl App {
                 vec![
                     (
                         "/improve plan".into(),
-                        "Generate a ranked improve todo list without editing",
+                        "Skapa en rangordnad förbättringslista utan att ändra kod",
                     ),
                     (
                         "/improve resume".into(),
-                        "Resume the last saved improve mode for this session",
+                        "Återuppta senast sparade förbättringsläge för sessionen",
                     ),
                     (
                         "/improve status".into(),
-                        "Show current improve batch and inferred status",
+                        "Visa aktuell förbättringsomgång och härledd status",
                     ),
                     (
                         "/improve stop".into(),
-                        "Stop improvement mode after the next safe point",
+                        "Stoppa förbättringsläget vid nästa säkra punkt",
                     ),
                 ],
             );
@@ -1030,19 +1027,19 @@ impl App {
                 vec![
                     (
                         "/refactor plan".into(),
-                        "Generate a ranked refactor todo list without editing",
+                        "Skapa en rangordnad refaktoreringslista utan att ändra kod",
                     ),
                     (
                         "/refactor resume".into(),
-                        "Resume the last saved refactor mode for this session",
+                        "Återuppta senast sparade refaktoreringsläge för sessionen",
                     ),
                     (
                         "/refactor status".into(),
-                        "Show current refactor batch and inferred status",
+                        "Visa aktuell refaktoreringsomgång och härledd status",
                     ),
                     (
                         "/refactor stop".into(),
-                        "Stop refactor mode after the next safe point",
+                        "Stoppa refaktoreringsläget vid nästa säkra punkt",
                     ),
                 ],
             );
@@ -1052,9 +1049,9 @@ impl App {
             return self.rank_suggestions(
                 input,
                 vec![
-                    ("/swarm on".into(), "Enable swarm for this session"),
-                    ("/swarm off".into(), "Disable swarm for this session"),
-                    ("/swarm status".into(), "Show swarm feature status"),
+                    ("/swarm on".into(), "Slå på swarm för den här sessionen"),
+                    ("/swarm off".into(), "Stäng av swarm för den här sessionen"),
+                    ("/swarm status".into(), "Visa status för swarm-funktionen"),
                 ],
             );
         }
@@ -1065,15 +1062,15 @@ impl App {
                 vec![
                     (
                         "/overnight 7".into(),
-                        "Start a 7-hour supervised overnight run",
+                        "Starta en 7 timmars övervakad nattkörning",
                     ),
                     (
                         "/overnight status".into(),
-                        "Show latest overnight run status",
+                        "Visa status för senaste nattkörningen",
                     ),
-                    ("/overnight log".into(), "Show recent overnight events"),
-                    ("/overnight review".into(), "Open the generated review page"),
-                    ("/overnight cancel".into(), "Request overnight cancellation"),
+                    ("/overnight log".into(), "Visa senaste nattkörningshändelser"),
+                    ("/overnight review".into(), "Öppna den genererade granskningssidan"),
+                    ("/overnight cancel".into(), "Begär avbrott av nattkörningen"),
                 ],
             );
         }
@@ -1081,7 +1078,7 @@ impl App {
         if prefix.starts_with("/subscription ") {
             return self.rank_suggestions(
                 input,
-                vec![("/subscription status".into(), "Show subscription status")],
+                vec![("/subscription status".into(), "Visa prenumerationsstatus")],
             );
         }
 
@@ -1091,15 +1088,15 @@ impl App {
                 vec![
                     (
                         "/alignment status".into(),
-                        "Show current and saved alignment",
+                        "Visa aktuell och sparad justering",
                     ),
                     (
                         "/alignment centered".into(),
-                        "Save centered alignment and apply it now",
+                        "Spara centrerad justering och tillämpa direkt",
                     ),
                     (
                         "/alignment left".into(),
-                        "Save left-aligned layout and apply it now",
+                        "Spara vänsterjusterad layout och tillämpa direkt",
                     ),
                 ],
             );
@@ -1111,15 +1108,15 @@ impl App {
                 vec![
                     (
                         "/compact-notifications status".into(),
-                        "Show whether notifications are compact",
+                        "Visa om notiser är kompakta",
                     ),
                     (
                         "/compact-notifications on".into(),
-                        "Collapse swarm/file-activity notifications to one line",
+                        "Fäll ihop swarm- och filnotiser till en rad",
                     ),
                     (
                         "/compact-notifications off".into(),
-                        "Show full multi-line notification cards",
+                        "Visa fullständiga flerradiga notiskort",
                     ),
                 ],
             );
@@ -1131,15 +1128,15 @@ impl App {
                 vec![
                     (
                         "/tool-call-details status".into(),
-                        "Show whether technical details render on intent rows",
+                        "Visa om tekniska detaljer ritas på avsiktsrader",
                     ),
                     (
                         "/tool-call-details on".into(),
-                        "Show the dimmed technical detail next to tool intents",
+                        "Visa den dämpade tekniska detaljen intill verktygsavsikter",
                     ),
                     (
                         "/tool-call-details off".into(),
-                        "Show only the intent on tool rows that have one",
+                        "Visa bara avsikten på verktygsrader som har en",
                     ),
                 ],
             );
@@ -1151,15 +1148,15 @@ impl App {
                 vec![
                     (
                         "/show-agentgrep-output status".into(),
-                        "Show whether agentgrep output is shown inline",
+                        "Visa om agentgrep-utdata visas inbäddat",
                     ),
                     (
                         "/show-agentgrep-output on".into(),
-                        "Render full agentgrep search results inline in chat",
+                        "Visa fullständiga agentgrep-träffar inbäddat i chatten",
                     ),
                     (
                         "/show-agentgrep-output off".into(),
-                        "Show only the one-line agentgrep summary",
+                        "Visa bara agentgreps enradiga sammanfattning",
                     ),
                 ],
             );
@@ -1169,9 +1166,9 @@ impl App {
             return self.rank_suggestions(
                 input,
                 vec![
-                    ("/config init".into(), "Create a default config file"),
-                    ("/config create".into(), "Alias for /config init"),
-                    ("/config edit".into(), "Open the config file in $EDITOR"),
+                    ("/config init".into(), "Skapa en standardkonfigurationsfil"),
+                    ("/config create".into(), "Alias för /config init"),
+                    ("/config edit".into(), "Öppna konfigurationsfilen i $EDITOR"),
                 ],
             );
         }
@@ -1195,8 +1192,8 @@ impl App {
             return self.rank_suggestions(
                 input,
                 vec![
-                    ("/goals resume".into(), "Resume the current goal"),
-                    ("/goals show".into(), "Open a specific goal by id"),
+                    ("/goals resume".into(), "Återuppta aktuellt mål"),
+                    ("/goals show".into(), "Öppna ett visst mål via id"),
                 ],
             );
         }
@@ -1207,12 +1204,12 @@ impl App {
                 vec![
                     (
                         "/selfdev status".into(),
-                        "Show current self-dev/build status",
+                        "Visa aktuell status för self-dev och bygge",
                     ),
-                    ("/selfdev enter".into(), "Open a blank self-dev session"),
+                    ("/selfdev enter".into(), "Öppna en tom self-dev-session"),
                     (
                         "/selfdev enter ".into(),
-                        "Open a self-dev session with a prompt",
+                        "Öppna en self-dev-session med en prompt",
                     ),
                 ],
             );
@@ -1311,7 +1308,7 @@ impl App {
             let input = self.input.trim_start();
             let typed = input.trim_end();
             if !typed.is_empty() && typed.starts_with('/') && "/cancel".starts_with(typed) {
-                return vec![("/cancel".into(), "Cancel the pending prompt")];
+                return vec![("/cancel".into(), "Avbryt väntande prompt")];
             }
             return Vec::new();
         }
