@@ -72,11 +72,23 @@ cmd="$(printf '%s\n' "$cmd" | awk '
             t = substr($0, RSTART, RLENGTH)
             gsub(/^<<-?[ \t]*/, "", t)
             gsub(/['"'"'"]/, "", t)
-            term = t
-            skip = 1
-        }
+        term = t
+        skip = 1
     }
+}
 ')"
+
+# Samma princip som for heredocs: text ar data, inte kommandon. Ett
+# commit-meddelande som BESKRIVER `git reset --hard` ar ofarligt, men
+# blockerades tidigare. Det ar samma sorts larm-som-ropar-om-fel-sak som
+# de 20 falska notiserna, och det lar anvandaren att kringga policyn.
+# Klipp darfor bort -m/--message-argument innan reglerna korras.
+cmd="$(printf '%s\n' "$cmd" | sed -E "
+    s/(^|[[:space:]])-m[[:space:]]+\"([^\"\\\\]|\\\\.)*\"/\1-m MSG/g
+    s/(^|[[:space:]])-m[[:space:]]+'[^']*'/\1-m MSG/g
+    s/(^|[[:space:]])--message[[:space:]]*=?[[:space:]]*\"([^\"\\\\]|\\\\.)*\"/\1--message=MSG/g
+    s/(^|[[:space:]])--message[[:space:]]*=?[[:space:]]*'[^']*'/\1--message=MSG/g
+")"
 [ -n "$cmd" ] || exit 0
 
 # --- 1. Destruktiva shell-kommandon ------------------------------------------

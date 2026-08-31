@@ -68,6 +68,15 @@ run 0 "heredoc som NÄMNER git reset --hard"     "$(printf 'cat <<EOF >> doc.md\
 run 0 "heredoc som nämner rm -rf /"             "$(printf 'cat <<DOC >> doc.md\nrm -rf / ar farligt.\nDOC')"
 run 0 "citerad heredoc-avslutare"               "$(printf "cat <<'EOF' >> doc.md\ngit clean -fd forstor filer.\nEOF")"
 
+# Commit-meddelanden ar text, precis som heredoc-kroppar. Att beskriva ett
+# farligt kommando i ett meddelande blockerades tidigare, vilket gjorde det
+# omojligt att dokumentera sakerhetsfixar i historiken.
+run 0 "commit -m som NAMNER git reset --hard"   'git commit -m "fix: undvik git reset --hard"'
+run 0 "commit -m enkelfnutt namner rm -rf /"    "git commit -m 'doc: varna for rm -rf /'"
+run 0 "commit --message= namner push --force"   'git commit --message="undvik git push --force"'
+# ...men ett riktigt kommando EFTER meddelandet ska fortfarande blockeras.
+run 2 "commit foljt av RIKTIG reset --hard"     'git commit -m "ok" && git reset --hard'
+
 # cd-hantering: policyn maste lasa remote fran den katalog kommandot byter
 # till, inte fran sessionens repo. Bygger ett eget repo sa testet inte beror
 # pa nagot som stadats bort.
