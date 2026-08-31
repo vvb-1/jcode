@@ -595,7 +595,11 @@ fn test_refresh_model_list_command_suggestions() {
     assert!(!suggestions.iter().any(|(cmd, _)| cmd == "/refresh-models"));
 
     let spaced = app.get_suggestions_for("/refresh ");
-    assert!(spaced.is_empty());
+    let spaced_cmds: Vec<&str> = spaced.iter().map(|(cmd, _)| cmd.as_str()).collect();
+    assert!(
+        spaced.is_empty(),
+        "ett avslutande mellanslag ska inte ge forslag, fick: {spaced_cmds:?}"
+    );
 }
 
 #[test]
@@ -876,7 +880,7 @@ fn test_cancel_command_is_available_for_prefix_autocomplete() {
     let suggestions = app.get_suggestions_for("/can");
 
     assert!(suggestions.iter().any(|(cmd, help)| {
-        cmd == "/cancel" && *help == "Cancel the current prompt or operation"
+        cmd == "/cancel" && *help == "Avbryt aktuell prompt eller operation"
     }));
 }
 

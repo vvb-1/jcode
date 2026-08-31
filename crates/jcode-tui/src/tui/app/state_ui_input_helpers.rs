@@ -324,7 +324,15 @@ impl App {
         // Bucket 0 = fuzzy matches on the command's description, so typing a
         // word from the help text (e.g. `/bok` -> "Sätter ett bokmärke ...")
         // still surfaces the command.
-        let description_needle = needle.trim_start_matches('/').trim();
+        // Ett avslutande mellanslag betyder att anvandaren skrivit klart
+        // kommandonamnet och borjat pa ett argument. Da ar beskrivningsmatchning
+        // fel: `/refresh ` traffade `/keys`, vars hjalptext innehaller ordet
+        // "refresh". Matcha bara beskrivningar medan namnet fortfarande skrivs.
+        let description_needle = if needle.ends_with(' ') {
+            ""
+        } else {
+            needle.trim_start_matches('/')
+        };
         let description_query = (description_needle.chars().count() >= 2)
             .then(|| jcode_fuzzy::PreparedTokenQuery::new(description_needle));
         let mut scored: Vec<(u8, i32, String, &'static str)> = Vec::new();
