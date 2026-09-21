@@ -119,15 +119,20 @@ impl ChannelRegistry {
         }
     }
 
-    pub fn spawn_reply_loops(&self, runner: &AmbientRunnerHandle) {
+    pub fn spawn_reply_loops(
+        &self,
+        runner: &AmbientRunnerHandle,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
+        let mut handles = Vec::new();
         for ch in self.channels.iter().filter(|c| c.is_reply_enabled()) {
             let ch = Arc::clone(ch);
             let runner = runner.clone();
-            tokio::spawn(async move {
+            handles.push(tokio::spawn(async move {
                 logging::info(&format!("{} reply loop spawned", ch.name()));
                 ch.reply_loop(runner).await;
-            });
+            }));
         }
+        handles
     }
 
     pub fn channel_names(&self) -> Vec<String> {

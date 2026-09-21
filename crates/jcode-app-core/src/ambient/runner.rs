@@ -34,6 +34,26 @@ fn ambient_allowed(status: &AmbientStatus) -> bool {
     config().ambient.enabled && !matches!(status, AmbientStatus::Disabled)
 }
 
+/// Start or stop ambient-only reply pollers as `ambient.enabled` changes.
+/// Scheduled session-targeted tasks still run without this reply infrastructure.
+fn sync_reply_pollers(
+    pollers: &mut Vec<tokio::task::JoinHandle<()>>,
+    spawned: &mut bool,
+    enabled: bool,
+    spawn: impl FnOnce() -> Vec<tokio::task::JoinHandle<()>>,
+) {
+    if enabled && !*spawned {
+        *pollers = spawn();
+        *spawned = true;
+    } else if !enabled && *spawned {
+        for handle in pollers.drain(..) {
+            handle.abort();
+        }
+        *spawned = false;
+        logging::info("Ambient runner: reply pollers stopped");
+    }
+}
+
 /// Shared ambient runner state, accessible from the server, debug socket, and TUI.
 #[derive(Clone)]
 pub struct AmbientRunnerHandle {
@@ -531,6 +551,27 @@ impl AmbientRunnerHandle {
         }
     }
 
+    fn spawn_reply_pollers(&self) -> Vec<tokio::task::JoinHandle<()>> {
+        let mut handles = Vec::new();
+        let safety_config = config().safety.clone();
+        if safety_config.email_reply_enabled
+            && safety_config.email_imap_host.is_some()
+            && safety_config.email_enabled
+        {
+            let imap_config = safety_config.clone();
+            handles.push(tokio::spawn(async move {
+                crate::notifications::imap_reply_loop(imap_config).await;
+            }));
+            logging::info("Ambient runner: IMAP reply poller spawned");
+        }
+
+        // Spawn reply pollers for all configured message channels
+        // (Telegram, Discord, etc.)
+        let channel_registry = crate::channel::ChannelRegistry::from_config(&safety_config);
+        handles.extend(channel_registry.spawn_reply_loops(self));
+        handles
+    }
+
     async fn deliver_ready_direct_items(
         &self,
         provider: &Arc<dyn Provider>,
@@ -554,27 +595,8 @@ impl AmbientRunnerHandle {
         }
         logging::info("Ambient runner: starting background loop");
 
-        // Spawn reply pollers only when ambient mode is enabled at startup; scheduled
-        // session-targeted scheduled tasks should still work without the ambient-only reply
-        // infrastructure.
-        if config().ambient.enabled {
-            let safety_config = config().safety.clone();
-            if safety_config.email_reply_enabled
-                && safety_config.email_imap_host.is_some()
-                && safety_config.email_enabled
-            {
-                let imap_config = safety_config.clone();
-                tokio::spawn(async move {
-                    crate::notifications::imap_reply_loop(imap_config).await;
-                });
-                logging::info("Ambient runner: IMAP reply poller spawned");
-            }
-
-            // Spawn reply pollers for all configured message channels
-            // (Telegram, Discord, etc.)
-            let channel_registry = crate::channel::ChannelRegistry::from_config(&safety_config);
-            channel_registry.spawn_reply_loops(&self);
-        }
+        let mut reply_pollers = Vec::new();
+        let mut reply_pollers_spawned = false;
 
         let amb_config = &config().ambient;
         let scheduler_config = AmbientSchedulerConfig {
@@ -593,6 +615,12 @@ impl AmbientRunnerHandle {
             let state = { self.inner.state.read().await.clone() };
 
             let ambient_allowed = ambient_allowed(&state.status);
+            sync_reply_pollers(
+                &mut reply_pollers,
+                &mut reply_pollers_spawned,
+                config().ambient.enabled,
+                || self.spawn_reply_pollers(),
+            );
 
             if ambient_allowed {
                 // Update scheduler's user-active state

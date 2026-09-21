@@ -1,4 +1,4 @@
-use super::{AmbientRunnerHandle, ambient_allowed};
+use super::{AmbientRunnerHandle, ambient_allowed, sync_reply_pollers};
 use crate::ambient::{AmbientStatus, Priority, ScheduleTarget, ScheduledItem};
 use crate::config::Config;
 use crate::message::{Message, Role, StreamEvent, ToolDefinition};
@@ -8,7 +8,7 @@ use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -84,6 +84,57 @@ fn ambient_gate_tracks_config_toggles_and_preserves_disabled_override() {
             !ambient_allowed(&AmbientStatus::Disabled),
             "an explicit stop must win even when config enables ambient"
         );
+    }
+}
+
+#[tokio::test]
+async fn reply_pollers_sync_to_runtime_enable_flag() {
+    let mut pollers = Vec::new();
+    let mut spawned = false;
+    let spawn_count = Arc::new(AtomicUsize::new(0));
+
+    let spawn = || {
+        let spawn_count = spawn_count.clone();
+        move || {
+            spawn_count.fetch_add(1, Ordering::SeqCst);
+            vec![tokio::spawn(std::future::pending::<()>())]
+        }
+    };
+
+    sync_reply_pollers(&mut pollers, &mut spawned, false, spawn());
+    assert!(!spawned);
+    assert!(pollers.is_empty());
+    assert_eq!(spawn_count.load(Ordering::SeqCst), 0);
+
+    sync_reply_pollers(&mut pollers, &mut spawned, true, spawn());
+    assert!(spawned);
+    assert_eq!(pollers.len(), 1);
+    assert_eq!(spawn_count.load(Ordering::SeqCst), 1);
+
+    sync_reply_pollers(&mut pollers, &mut spawned, true, spawn());
+    assert_eq!(
+        spawn_count.load(Ordering::SeqCst),
+        1,
+        "already spawned; must not launch again"
+    );
+
+    sync_reply_pollers(&mut pollers, &mut spawned, false, spawn());
+    assert!(!spawned);
+    assert!(
+        pollers.is_empty(),
+        "disabling ambient must abort running reply pollers"
+    );
+
+    sync_reply_pollers(&mut pollers, &mut spawned, true, spawn());
+    assert!(spawned);
+    assert_eq!(
+        spawn_count.load(Ordering::SeqCst),
+        2,
+        "re-enabling ambient must spawn reply pollers again"
+    );
+
+    for handle in pollers.drain(..) {
+        handle.abort();
     }
 }
 
