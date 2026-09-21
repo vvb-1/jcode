@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -328,6 +328,34 @@ fn validate_input(input: &Input) -> Result<()> {
     Ok(())
 }
 
+fn confined_repository_root(ctx: &ToolContext, requested: &Path) -> Result<PathBuf> {
+    if requested.is_absolute() {
+        bail!("compile_remote path must be relative to the session workspace");
+    }
+    if requested.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        bail!("compile_remote path must not contain parent-directory components");
+    }
+
+    let workspace = ctx
+        .resolve_path(Path::new("."))
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("Could not resolve the session workspace"))?;
+    let repository = ctx
+        .resolve_path(requested)
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("Could not resolve the selected repository"))?;
+
+    if !repository.starts_with(&workspace) {
+        bail!("compile_remote path must remain within the session workspace");
+    }
+    Ok(repository)
+}
+
 async fn submit(
     client: &reqwest::Client,
     base: &str,
@@ -424,7 +452,8 @@ impl Tool for CompileRemoteTool {
             bail!("{}", access.description());
         }
         let (base, key) = credentials.expect("verified access requires credentials");
-        let root = ctx.resolve_path(Path::new(input.path.as_deref().unwrap_or(".")));
+        let root =
+            confined_repository_root(&ctx, Path::new(input.path.as_deref().unwrap_or(".")))?;
         let snapshot = source::snapshot(&root).await?;
         let request_id = format!(
             "{:x}",

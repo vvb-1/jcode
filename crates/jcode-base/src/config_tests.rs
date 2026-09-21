@@ -124,6 +124,32 @@ fn gemini_environment_overrides_config_without_changing_the_file() {
     );
 }
 
+
+#[test]
+fn gemini_invalid_boolean_and_blank_primary_preserve_safe_fallbacks() {
+    let _lock = crate::storage::lock_test_env();
+    let _env = GeminiConfigEnv::new();
+    let mut cfg = Config::default();
+    cfg.provider.gemini_force_oauth = true;
+    cfg.provider.gemini_project = Some("from-config".into());
+
+    crate::env::set_var("JCODE_GEMINI_FORCE_OAUTH", "invalid");
+    crate::env::set_var("GOOGLE_CLOUD_PROJECT", "   ");
+    crate::env::set_var("GOOGLE_CLOUD_PROJECT_ID", "from-alias");
+
+    cfg.apply_env_overrides();
+
+    assert!(
+        cfg.provider.gemini_force_oauth,
+        "an invalid environment value must not disable configured OAuth"
+    );
+    assert_eq!(
+        cfg.provider.gemini_project.as_deref(),
+        Some("from-alias"),
+        "a blank primary project must fall back to the legacy alias"
+    );
+}
+
 #[test]
 fn test_openai_reasoning_effort_defaults_to_low() {
     assert_eq!(

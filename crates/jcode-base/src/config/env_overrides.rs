@@ -839,17 +839,22 @@ impl Config {
 
         // Explicit environment overrides win, but never export config values:
         // self-written env would mask subsequent config edits/removals.
-        if let Ok(v) = std::env::var("JCODE_GEMINI_FORCE_OAUTH") {
-            self.provider.gemini_force_oauth = parse_env_bool(&v).unwrap_or(false);
+        if let Ok(v) = std::env::var("JCODE_GEMINI_FORCE_OAUTH")
+            && let Some(parsed) = parse_env_bool(&v)
+        {
+            self.provider.gemini_force_oauth = parsed;
         }
 
-        if let Ok(v) = std::env::var("GOOGLE_CLOUD_PROJECT")
-            .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT_ID"))
-        {
-            let v = v.trim();
-            if !v.is_empty() {
-                self.provider.gemini_project = Some(v.to_string());
-            }
+        let project = std::env::var("GOOGLE_CLOUD_PROJECT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("GOOGLE_CLOUD_PROJECT_ID")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+        if let Some(project) = project {
+            self.provider.gemini_project = Some(project.trim().to_string());
         }
     }
 }

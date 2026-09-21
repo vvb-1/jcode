@@ -425,6 +425,48 @@ fn validates_timeout_action_and_command_without_network() {
     }
 }
 
+
+#[test]
+fn repository_root_accepts_only_canonical_workspace_descendants() {
+    let workspace = tempfile::tempdir().unwrap();
+    let repository = workspace.path().join("project");
+    std::fs::create_dir(&repository).unwrap();
+    let ctx = context(workspace.path());
+
+    assert_eq!(
+        confined_repository_root(&ctx, Path::new("project")).unwrap(),
+        repository.canonicalize().unwrap()
+    );
+
+    let absolute_error = confined_repository_root(&ctx, &repository)
+        .unwrap_err()
+        .to_string();
+    assert!(absolute_error.contains("relative to the session workspace"));
+
+    let parent_error = confined_repository_root(&ctx, Path::new("../project"))
+        .unwrap_err()
+        .to_string();
+    assert!(parent_error.contains("parent-directory"));
+}
+
+#[cfg(unix)]
+#[test]
+fn repository_root_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    symlink(outside.path(), workspace.path().join("linked-repository")).unwrap();
+
+    let error = confined_repository_root(
+        &context(workspace.path()),
+        Path::new("linked-repository"),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("within the session workspace"));
+}
+
 #[tokio::test]
 async fn execute_denied_access_precedes_snapshot_and_upload_even_with_cached_ready() {
     let env = Environment::new();
