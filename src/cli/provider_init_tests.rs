@@ -33,6 +33,7 @@ fn test_provider_choice_arg_values() {
     assert_eq!(ProviderChoice::Openai.as_arg_value(), "openai");
     assert_eq!(ProviderChoice::OpenaiApi.as_arg_value(), "openai-api");
     assert_eq!(ProviderChoice::Openrouter.as_arg_value(), "openrouter");
+    assert_eq!(ProviderChoice::Orcarouter.as_arg_value(), "orcarouter");
     assert_eq!(ProviderChoice::Bedrock.as_arg_value(), "bedrock");
     assert_eq!(ProviderChoice::Azure.as_arg_value(), "azure");
     assert_eq!(ProviderChoice::Opencode.as_arg_value(), "opencode");
@@ -227,6 +228,57 @@ requires_api_key = false
     }
     crate::config::invalidate_config_cache();
     crate::auth::AuthStatus::invalidate_cache();
+}
+
+#[test]
+fn forced_gemini_oauth_does_not_accept_an_api_key_for_startup() {
+    let _guard = lock_env();
+    let _env_guard = crate::storage::lock_test_env();
+    let dir = TempDir::new().expect("temp dir");
+    let keys = [
+        "JCODE_HOME",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "JCODE_GEMINI_FORCE_OAUTH",
+        "JCODE_NON_INTERACTIVE",
+    ];
+    let saved: Vec<(&str, Option<String>)> = keys
+        .iter()
+        .map(|key| (*key, std::env::var(key).ok()))
+        .collect();
+
+    crate::env::set_var("JCODE_HOME", dir.path());
+    crate::env::set_var("GEMINI_API_KEY", "gemini-api-key-must-not-auth-oauth");
+    crate::env::remove_var("GOOGLE_API_KEY");
+    crate::env::set_var("JCODE_GEMINI_FORCE_OAUTH", "1");
+    crate::env::set_var("JCODE_NON_INTERACTIVE", "1");
+    crate::config::invalidate_config_cache();
+    crate::auth::AuthStatus::invalidate_cache();
+    let cli_path = crate::auth::gemini::gemini_cli_oauth_path().expect("Gemini CLI auth path");
+    std::fs::create_dir_all(cli_path.parent().expect("Gemini CLI auth directory"))
+        .expect("create Gemini CLI auth directory");
+    std::fs::write(&cli_path, "{}").expect("write unconsented Gemini CLI credentials");
+
+    let explicit = ensure_gemini_auth_allowed_for_explicit_choice();
+    let automatic = maybe_enable_gemini_auth_for_auto(false);
+
+    for (key, value) in saved {
+        if let Some(value) = value {
+            crate::env::set_var(key, value);
+        } else {
+            crate::env::remove_var(key);
+        }
+    }
+    crate::config::invalidate_config_cache();
+    crate::auth::AuthStatus::invalidate_cache();
+
+    assert!(
+        explicit
+            .expect_err("forced OAuth must not accept an API key")
+            .to_string()
+            .contains("jcode login --provider gemini")
+    );
+    assert!(!automatic.expect("auto Gemini preflight"));
 }
 
 #[test]
@@ -518,6 +570,10 @@ fn choice_for_login_provider_round_trips_core_targets() {
 
 #[test]
 fn choice_for_login_provider_round_trips_openai_compatible_profiles() {
+    assert_eq!(
+        choice_for_login_provider(provider_catalog::ORCAROUTER_LOGIN_PROVIDER),
+        Some(ProviderChoice::Orcarouter)
+    );
     assert_eq!(
         choice_for_login_provider(provider_catalog::OPENCODE_LOGIN_PROVIDER),
         Some(ProviderChoice::Opencode)
