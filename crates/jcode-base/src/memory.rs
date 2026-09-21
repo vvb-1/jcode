@@ -63,6 +63,7 @@ pub use prompt_support::{
 const LEGACY_NOTE_CATEGORY: &str = "note";
 const MEMORY_RELEVANCE_MAX_CANDIDATES: usize = 30;
 const MEMORY_RELEVANCE_MAX_RESULTS: usize = 10;
+const AUTOMATIC_RECALL_PROMPT_LIMIT: usize = 5;
 
 /// Producer of synthetic [`MemoryEntry`] values contributed by a higher layer.
 ///
@@ -85,6 +86,44 @@ pub fn register_synthetic_entry_provider(provider: SyntheticEntryProvider) {
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .push(provider);
+}
+
+#[cfg(test)]
+static SYNTHETIC_ENTRY_PROVIDER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) struct SyntheticEntryProviderTestGuard {
+    provider: SyntheticEntryProvider,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for SyntheticEntryProviderTestGuard {
+    fn drop(&mut self) {
+        let mut providers = SYNTHETIC_ENTRY_PROVIDERS
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(index) = providers
+            .iter()
+            .rposition(|registered| std::ptr::fn_addr_eq(*registered, self.provider))
+        {
+            providers.remove(index);
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn register_synthetic_entry_provider_for_test(
+    provider: fn() -> Vec<MemoryEntry>,
+) -> SyntheticEntryProviderTestGuard {
+    let lock = SYNTHETIC_ENTRY_PROVIDER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    register_synthetic_entry_provider(provider);
+    SyntheticEntryProviderTestGuard {
+        provider,
+        _lock: lock,
+    }
 }
 
 fn collect_synthetic_entries() -> Vec<MemoryEntry> {
@@ -1163,7 +1202,7 @@ impl MemoryManager {
                 return Ok(Vec::new());
             }
             let client = crate::jev::JevClient::new()?;
-            crate::memory_jev::select(&client, query, entries, 5).await
+            crate::memory_jev::select(&client, query, entries, AUTOMATIC_RECALL_PROMPT_LIMIT).await
         }
         .await;
         let relevant: Vec<MemoryEntry> = match result {
@@ -1192,8 +1231,8 @@ impl MemoryManager {
                 StepStatus::Pending
             };
         });
-        let prompt = format_relevant_prompt(&relevant, 5);
-        let display = format_relevant_display_prompt(&relevant, 5);
+        let prompt = format_relevant_prompt(&relevant, AUTOMATIC_RECALL_PROMPT_LIMIT);
+        let display = format_relevant_display_prompt(&relevant, AUTOMATIC_RECALL_PROMPT_LIMIT);
         set_state(if count == 0 {
             MemoryState::Idle
         } else {

@@ -25,8 +25,15 @@ struct PendingBinding {
 
 #[derive(PartialEq, Eq)]
 struct MemorySnapshot {
-    global: bool,
+    source: MemorySnapshotSource,
     signature: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MemorySnapshotSource {
+    Project,
+    Global,
+    Synthetic,
 }
 
 /// Signature of the last injected prompt to suppress near-immediate duplicates.
@@ -141,17 +148,33 @@ fn read_validation_graph(
     Ok(graph)
 }
 
-fn semantic_signature(entry: &super::MemoryEntry) -> anyhow::Result<String> {
+fn semantic_signature(
+    entry: &super::MemoryEntry,
+    source: MemorySnapshotSource,
+) -> anyhow::Result<String> {
     // Include everything sent to Jev plus semantic/rendering metadata. Access
-    // counters and embeddings do not change the fact that was judged.
-    Ok(serde_json::to_string(&(
-        &entry.content,
-        &entry.category,
-        &entry.tags,
-        &entry.source,
-        &entry.trust,
-        &entry.updated_at,
-    ))?)
+    // counters and embeddings do not change the fact that was judged. Synthetic
+    // providers rebuild entries on demand, so their generated timestamps are
+    // not stable identity; their actual content and provenance still are.
+    match source {
+        MemorySnapshotSource::Synthetic => Ok(serde_json::to_string(&(
+            &entry.content,
+            &entry.category,
+            &entry.tags,
+            &entry.source,
+            &entry.trust,
+        ))?),
+        MemorySnapshotSource::Project | MemorySnapshotSource::Global => {
+            Ok(serde_json::to_string(&(
+                &entry.content,
+                &entry.category,
+                &entry.tags,
+                &entry.source,
+                &entry.trust,
+                &entry.updated_at,
+            ))?)
+        }
+    }
 }
 
 fn snapshot_selected_memories(
@@ -170,13 +193,28 @@ fn snapshot_selected_memories(
     // Do not swallow a corrupt/unreadable store, even if the other store has
     // matching IDs. Ambiguous duplicate IDs are likewise rejected below.
     let global = read_validation_graph(&manager.global_memory_path()?)?;
+    let synthetic = super::collect_synthetic_entries();
     let mut snapshots = HashMap::new();
     let mut entries = Vec::with_capacity(ids.len());
     for id in ids {
-        let (entry, is_global) = match (project.get_memory(id), global.get_memory(id)) {
-            (Some(entry), None) => (entry, false),
-            (None, Some(entry)) => (entry, true),
-            _ => anyhow::bail!("selected memory is absent or ambiguous"),
+        let mut matches = Vec::new();
+        if let Some(entry) = project.get_memory(id) {
+            matches.push((entry, MemorySnapshotSource::Project));
+        }
+        if let Some(entry) = global.get_memory(id) {
+            matches.push((entry, MemorySnapshotSource::Global));
+        }
+        matches.extend(
+            synthetic
+                .iter()
+                .filter(|entry| entry.id == *id)
+                .map(|entry| (entry, MemorySnapshotSource::Synthetic)),
+        );
+        if matches.len() != 1 {
+            anyhow::bail!("selected memory is absent or ambiguous");
+        }
+        let Some((entry, source)) = matches.pop() else {
+            anyhow::bail!("selected memory is absent or ambiguous");
         };
         anyhow::ensure!(
             entry.id == *id,
@@ -188,16 +226,10 @@ fn snapshot_selected_memories(
         );
         // Compare semantic/rendered metadata exactly, not a collision-prone hash.
         // Access counters and embeddings are deliberately excluded.
-        let signature = semantic_signature(entry)?;
+        let signature = semantic_signature(entry, source)?;
         anyhow::ensure!(
             snapshots
-                .insert(
-                    id.clone(),
-                    MemorySnapshot {
-                        global: is_global,
-                        signature
-                    }
-                )
+                .insert(id.clone(), MemorySnapshot { source, signature })
                 .is_none(),
             "duplicate selected memory ID"
         );
@@ -379,6 +411,13 @@ pub(crate) fn set_pending_memory_for_project_with_selection(
     display_prompt: Option<String>,
     project_dir: Option<&str>,
 ) {
+    let selected_entries: Vec<_> = crate::memory_types::selected_entries_for_prompt(
+        selected_entries,
+        super::AUTOMATIC_RECALL_PROMPT_LIMIT,
+    )
+    .into_iter()
+    .cloned()
+    .collect();
     let memory_ids = selected_entries
         .iter()
         .map(|entry| entry.id.clone())
@@ -390,7 +429,7 @@ pub(crate) fn set_pending_memory_for_project_with_selection(
         memory_ids,
         display_prompt,
         project_dir,
-        Some(selected_entries),
+        Some(&selected_entries),
     );
 }
 
@@ -416,10 +455,9 @@ fn publish_scoped_memory(
                 entry.id == *id
                     && entry.active
                     && entry.superseded_by.is_none()
-                    && semantic_signature(entry).is_ok_and(|signature| {
-                        snapshots
-                            .get(id)
-                            .is_some_and(|current| current.signature == signature)
+                    && snapshots.get(id).is_some_and(|current| {
+                        semantic_signature(entry, current.source)
+                            .is_ok_and(|signature| current.signature == signature)
                     })
             });
         if !matches_selection {
@@ -737,6 +775,15 @@ mod scoped_tests {
     use crate::memory::{MemoryCategory, MemoryEntry, MemoryManager};
     use crate::memory_graph::MemoryGraph;
 
+    const SYNTHETIC_SKILL_ID: &str = "skill:pending-publication-regression";
+
+    fn synthetic_skill_for_pending() -> Vec<MemoryEntry> {
+        let mut entry = fact("Use the registered skill during automatic recall");
+        entry.id = SYNTHETIC_SKILL_ID.into();
+        entry.category = MemoryCategory::Custom("Skills".into());
+        vec![entry]
+    }
+
     struct HomeGuard {
         previous: Option<std::ffi::OsString>,
         _dir: tempfile::TempDir,
@@ -1050,6 +1097,71 @@ mod scoped_tests {
                 pending.prompt.find("Second selected").unwrap()
                     < pending.prompt.find("First selected").unwrap()
             );
+        });
+    }
+
+    #[test]
+    fn synthetic_skill_survives_publication_and_consumption_validation() {
+        fixture(|| {
+            let _provider = super::super::register_synthetic_entry_provider_for_test(
+                synthetic_skill_for_pending,
+            );
+            let selected = synthetic_skill_for_pending();
+            let prompt = super::super::format_relevant_prompt(&selected, selected.len()).unwrap();
+
+            set_pending_memory_for_project_with_selection(
+                "synthetic",
+                prompt,
+                selected.len(),
+                &selected,
+                None,
+                None,
+            );
+
+            let pending = take_pending_memory_for_project("synthetic", None)
+                .expect("synthetic skill should remain valid through publication");
+            assert_eq!(pending.memory_ids, [SYNTHETIC_SKILL_ID]);
+        });
+    }
+
+    #[test]
+    fn publication_binds_only_entries_rendered_by_the_prompt_limit() {
+        fixture(|| {
+            let first = fact("Relevant fact 0");
+            let duplicate = fact("  RELEVANT   fact 0  ");
+            let mut inactive = fact("Inactive fact");
+            inactive.active = false;
+            let entries = vec![
+                first,
+                duplicate,
+                inactive,
+                fact("Relevant fact 1"),
+                fact("Relevant fact 2"),
+                fact("Relevant fact 3"),
+                fact("Relevant fact 4"),
+                fact("Relevant fact 5"),
+            ];
+            save(None, true, &entries);
+            let prompt = super::super::format_relevant_prompt(&entries, 5).unwrap();
+
+            set_pending_memory_for_project_with_selection(
+                "render-limit",
+                prompt,
+                entries.len(),
+                &entries,
+                None,
+                None,
+            );
+
+            let pending = take_pending_memory_for_project("render-limit", None)
+                .expect("rendered entries should validate independently of unrendered matches");
+            assert_eq!(
+                pending.memory_ids,
+                [0, 3, 4, 5, 6]
+                    .map(|index| entries[index].id.clone())
+                    .to_vec()
+            );
+            assert!(!pending.prompt.contains("Relevant fact 5"));
         });
     }
 }

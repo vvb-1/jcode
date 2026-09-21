@@ -733,7 +733,7 @@ fn retrieval_candidates_include_local_skills() {
         // memory<-skill integration this test exercises is wired up. The
         // shared snapshot is global-only (issue #457), so production composes
         // the process-cwd project overlay on top.
-        crate::memory::register_synthetic_entry_provider(|| {
+        let _synthetic_provider = crate::memory::register_synthetic_entry_provider_for_test(|| {
             let global = crate::skill::SkillRegistry::shared_snapshot();
             crate::skill::SkillRegistry::effective_for_working_dir(&global, None)
                 .list()

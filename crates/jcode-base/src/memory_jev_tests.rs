@@ -369,27 +369,39 @@ fn registered_skill_candidates_follow_production_scope_rules() {
     let old = std::env::var_os("JCODE_HOME");
     crate::env::set_var("JCODE_HOME", home.path());
     let result = std::panic::catch_unwind(|| {
-        crate::memory::register_synthetic_entry_provider(registered_skill_candidate);
-        let manager = MemoryManager::new_test();
+        {
+            let _synthetic_provider = crate::memory::register_synthetic_entry_provider_for_test(
+                registered_skill_candidate,
+            );
+            let manager = MemoryManager::new_test();
 
-        let project = collect_scoped(&manager, MemoryScope::Project).unwrap();
-        assert!(project.iter().all(|entry| entry.id != REGISTERED_SKILL_ID));
+            let project = collect_scoped(&manager, MemoryScope::Project).unwrap();
+            assert!(project.iter().all(|entry| entry.id != REGISTERED_SKILL_ID));
 
-        for scope in [MemoryScope::Global, MemoryScope::All] {
-            let candidates = collect_scoped(&manager, scope).unwrap();
+            for scope in [MemoryScope::Global, MemoryScope::All] {
+                let candidates = collect_scoped(&manager, scope).unwrap();
+                assert!(
+                    candidates
+                        .iter()
+                        .any(|entry| entry.id == REGISTERED_SKILL_ID)
+                );
+            }
+
+            let without_skills = MemoryManager::new_test().with_skills(false);
             assert!(
-                candidates
+                collect_scoped(&without_skills, MemoryScope::Global)
+                    .unwrap()
                     .iter()
-                    .any(|entry| entry.id == REGISTERED_SKILL_ID)
+                    .all(|entry| entry.id != REGISTERED_SKILL_ID)
             );
         }
 
-        let without_skills = MemoryManager::new_test().with_skills(false);
         assert!(
-            collect_scoped(&without_skills, MemoryScope::Global)
+            collect_scoped(&MemoryManager::new_test(), MemoryScope::Global)
                 .unwrap()
                 .iter()
-                .all(|entry| entry.id != REGISTERED_SKILL_ID)
+                .all(|entry| entry.id != REGISTERED_SKILL_ID),
+            "test provider leaked into later production-path collection"
         );
     });
     match old {
