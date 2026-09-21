@@ -70,6 +70,10 @@ struct ReplyPollerTasks {
 
 impl ReplyPollerTasks {
     fn reconcile(&mut self, enabled: bool, runner: &AmbientRunnerHandle) {
+        if self.active && self.tasks.iter().any(tokio::task::JoinHandle::is_finished) {
+            logging::warn("Ambient runner: reply poller exited; restarting reply pollers");
+            self.stop();
+        }
         match (enabled, self.active) {
             (true, false) => self.start(runner),
             (false, true) => self.stop(),

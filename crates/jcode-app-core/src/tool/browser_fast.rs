@@ -104,9 +104,13 @@ fn redact_credentials(value: &mut Value) -> bool {
                 false
             }
         }
-        Value::Array(items) => items
-            .iter_mut()
-            .fold(false, |found, item| redact_credentials(item) || found),
+        Value::Array(items) => {
+            let mut found = false;
+            for item in items {
+                found |= redact_credentials(item);
+            }
+            found
+        }
         Value::Object(items) => items.iter_mut().fold(false, |found, (key, item)| {
             let key = key.to_ascii_lowercase().replace('-', "_");
             if matches!(
@@ -566,7 +570,12 @@ pub(super) async fn run(
     let result: Result<(&str,String)> = async {
         anyhow::ensure!(input.tab_id.is_some(),"handoff requires explicit tab_id");
         anyhow::ensure!(input.all_frames!=Some(true),"handoff must target a single frame");
-        let mut caller_material=json!({"goal":input.goal,"context":input.context,"text_values":input.text_values});
+        let candidate_labels = input
+            .candidates
+            .iter()
+            .map(|candidate| candidate.label.as_str())
+            .collect::<Vec<_>>();
+        let mut caller_material=json!({"goal":input.goal,"context":input.context,"text_values":input.text_values,"candidate_labels":candidate_labels});
         anyhow::ensure!(!redact_credentials(&mut caller_material),"Credential material must stay with the main agent/user, not the fast browser model");
         let goal=input.goal.as_deref().filter(|g|!g.trim().is_empty()).context("handoff requires goal")?;
         anyhow::ensure!(goal.len()<=8000,"Goal too large");

@@ -78,8 +78,7 @@ pub fn load_file(
         page_id,
         title,
         &source_path,
-        SidePanelPageSource::LinkedFile,
-        format,
+        (SidePanelPageSource::LinkedFile, format),
         now,
         focus,
     );
@@ -255,8 +254,7 @@ fn write_page(
         page_id,
         title,
         &page_path,
-        SidePanelPageSource::Managed,
-        SidePanelPageFormat::Markdown,
+        (SidePanelPageSource::Managed, SidePanelPageFormat::Markdown),
         now,
         focus,
     );
@@ -270,11 +268,11 @@ fn upsert_page_record(
     page_id: &str,
     title: Option<&str>,
     file_path: &Path,
-    source: SidePanelPageSource,
-    format: SidePanelPageFormat,
+    page_kind: (SidePanelPageSource, SidePanelPageFormat),
     updated_at_ms: u64,
     focus: bool,
 ) {
+    let (source, format) = page_kind;
     let file_path = file_path.display().to_string();
     if let Some(existing) = state.pages.iter_mut().find(|page| page.id == page_id) {
         existing.title = title

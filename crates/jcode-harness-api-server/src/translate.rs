@@ -84,6 +84,9 @@ use serde_json::{Value, json};
 
 /// Where a translated client request should go.
 #[derive(Debug)]
+// This short-lived bridge value is consumed immediately; boxing every direct
+// reply would add an allocation without reducing retained state.
+#[allow(clippy::large_enum_variant)]
 pub enum Outbound {
     /// Forward to the legacy daemon connection.
     Legacy(Value),
@@ -2045,7 +2048,11 @@ impl BridgeState {
             .windows(needle.len())
             .enumerate()
             .filter_map(|(at, window)| (window == needle.as_bytes()).then_some(at + needle.len()));
-        let start = if last { starts.last()? } else { starts.next()? };
+        let start = if last {
+            starts.next_back()?
+        } else {
+            starts.next()?
+        };
         Option::<String>::deserialize(&mut serde_json::Deserializer::from_slice(&bytes[start..]))
             .ok()
             .flatten()
@@ -2262,7 +2269,7 @@ impl BridgeState {
                 .flat_map(|handle| handle.join().unwrap_or_default())
                 .collect::<Vec<_>>()
         });
-        ids.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+        ids.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
         Self::write_bootstrap_recent_session_index(&ids);
         if let Some(limit) = limit {
             ids.truncate(limit);

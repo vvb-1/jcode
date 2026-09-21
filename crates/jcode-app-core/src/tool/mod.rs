@@ -20,6 +20,8 @@ mod edit_stats;
 mod feedback;
 mod file_diff;
 mod gmail;
+// The initiative tool is exercised directly while its registry rollout remains staged.
+#[allow(dead_code)]
 mod goal;
 pub mod inflight;
 mod invalid;

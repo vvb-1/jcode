@@ -5,6 +5,7 @@
 //! are never reused. Git must be available on PATH.
 
 use anyhow::{Context, Result, bail, ensure};
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
 
@@ -22,8 +23,28 @@ pub struct Worktree {
     pub prunable: Option<String>,
 }
 
-fn git(working_dir: &str, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
+fn is_git_environment_key(key: &OsStr) -> bool {
+    key.to_string_lossy()
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GIT_"))
+}
+
+fn git_with_environment(
+    working_dir: &str,
+    args: &[&str],
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Result<Vec<u8>> {
+    let mut command = Command::new("git");
+    // Repository selectors such as GIT_DIR and GIT_WORK_TREE override
+    // current_dir. Rebuild the child environment without any inherited GIT_*
+    // values so SDK calls always operate on working_dir.
+    command.env_clear();
+    for (key, value) in environment {
+        if !is_git_environment_key(&key) {
+            command.env(key, value);
+        }
+    }
+    let output = command
         .current_dir(working_dir)
         .args(args)
         .output()
@@ -35,6 +56,10 @@ fn git(working_dir: &str, args: &[&str]) -> Result<Vec<u8>> {
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(output.stdout)
+}
+
+fn git(working_dir: &str, args: &[&str]) -> Result<Vec<u8>> {
+    git_with_environment(working_dir, args, std::env::vars_os())
 }
 
 /// List all worktrees, including bare, detached, locked, and prunable entries.
@@ -229,6 +254,55 @@ mod tests {
             Path::new(&created.path).parent()
         );
         assert_eq!(list(&path).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn inherited_git_environment_cannot_redirect_repository_selection() {
+        let (_target_temp, target) = repo();
+        let (_foreign_temp, foreign) = repo();
+        let foreign_git = Path::new(&foreign).join(".git");
+        let environment = std::env::vars_os().chain([
+            (
+                OsString::from("GIT_DIR"),
+                foreign_git.clone().into_os_string(),
+            ),
+            (OsString::from("GIT_WORK_TREE"), OsString::from(&foreign)),
+            (
+                OsString::from("GIT_COMMON_DIR"),
+                foreign_git.clone().into_os_string(),
+            ),
+            (
+                OsString::from("GIT_INDEX_FILE"),
+                foreign_git.join("index").into_os_string(),
+            ),
+            (
+                OsString::from("GIT_OBJECT_DIRECTORY"),
+                foreign_git.join("objects").into_os_string(),
+            ),
+            (
+                OsString::from("GIT_ALTERNATE_OBJECT_DIRECTORIES"),
+                foreign_git.join("objects").into_os_string(),
+            ),
+            (OsString::from("GIT_NAMESPACE"), OsString::from("foreign")),
+            (
+                OsString::from("GIT_CEILING_DIRECTORIES"),
+                OsString::from(&foreign),
+            ),
+        ]);
+
+        let entries = parse(
+            &git_with_environment(
+                &target,
+                &["worktree", "list", "--porcelain", "-z"],
+                environment,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, target);
+        assert_eq!(entries[0].branch.as_deref(), Some("refs/heads/main"));
     }
 
     #[test]

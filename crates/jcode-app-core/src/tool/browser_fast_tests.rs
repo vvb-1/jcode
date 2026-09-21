@@ -502,6 +502,30 @@ async fn credentials_in_page_never_reach_transport_or_parent() {
 }
 
 #[tokio::test]
+async fn credentials_in_exact_candidate_labels_never_reach_transport() {
+    for secret in [
+        "sk-or-v1-fake-secret-test-only-123456",
+        "Bearer fake-credential-12345",
+        "https://example.test/callback?code=test-only",
+    ] {
+        let browser = MockBrowser::new(vec![page("safe")]);
+        let transport = MockTransport::new(&[]);
+        let mut input = input();
+        input.candidates.push(ExactCandidate {
+            label: format!("Use {secret}"),
+            input: json!({"action":"scroll","y":100}),
+        });
+
+        let value = result(&browser, &transport, &input).await;
+
+        assert_eq!(value["status"], "hand_back");
+        assert!(!value.to_string().contains(secret));
+        assert!(transport.requests.lock().unwrap().is_empty());
+        assert!(browser.calls.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn done_checks_latest_dom_and_returns_changed_observation() {
     let browser = MockBrowser::new(vec![page("completed"), page("actually failed")]);
     let value = result(&browser, &MockTransport::new(&[("done", 0.99)]), &input()).await;

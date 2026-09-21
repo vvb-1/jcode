@@ -108,6 +108,29 @@ async fn reply_pollers_follow_the_runtime_ambient_gate() {
 }
 
 #[tokio::test]
+async fn finished_reply_poller_is_reaped_while_ambient_stays_enabled() {
+    let _guard = crate::storage::lock_test_env();
+    let _cache = ResetConfigCache;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp.path());
+    let runner = AmbientRunnerHandle::new(Arc::new(crate::safety::SafetySystem::new()));
+    let finished = tokio::spawn(async {});
+    while !finished.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    let finished_id = finished.id();
+    let mut pollers = ReplyPollerTasks {
+        active: true,
+        tasks: vec![finished],
+    };
+
+    pollers.reconcile(true, &runner);
+
+    assert!(pollers.active);
+    assert!(pollers.tasks.iter().all(|task| task.id() != finished_id));
+}
+
+#[tokio::test]
 async fn disabling_reply_pollers_aborts_existing_tasks() {
     struct ClearAlive(Arc<AtomicBool>);
     impl Drop for ClearAlive {
