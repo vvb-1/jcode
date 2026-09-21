@@ -9,6 +9,17 @@ fn entry(id: &str, content: &str) -> MemoryEntry {
     entry
 }
 
+const REGISTERED_SKILL_ID: &str = "skill:memory-jev-production-regression";
+
+fn registered_skill_candidate() -> Vec<MemoryEntry> {
+    let mut skill = entry(
+        REGISTERED_SKILL_ID,
+        "Use this registered skill for production recall regression coverage",
+    );
+    skill.category = MemoryCategory::Custom("Skills".into());
+    vec![skill]
+}
+
 #[derive(Default)]
 struct Mock {
     calls: Mutex<Vec<Value>>,
@@ -341,6 +352,45 @@ fn manager_scope_active_filter_and_storage_failures() {
         assert!(collect_scoped(&manager, MemoryScope::Global).is_err());
         assert!(collect_scoped(&manager, MemoryScope::All).is_err());
         assert!(collect_scoped(&manager, MemoryScope::Project).is_ok());
+    });
+    match old {
+        Some(value) => crate::env::set_var("JCODE_HOME", value),
+        None => crate::env::remove_var("JCODE_HOME"),
+    }
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+#[test]
+fn registered_skill_candidates_follow_production_scope_rules() {
+    let _guard = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let old = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+    let result = std::panic::catch_unwind(|| {
+        crate::memory::register_synthetic_entry_provider(registered_skill_candidate);
+        let manager = MemoryManager::new_test();
+
+        let project = collect_scoped(&manager, MemoryScope::Project).unwrap();
+        assert!(project.iter().all(|entry| entry.id != REGISTERED_SKILL_ID));
+
+        for scope in [MemoryScope::Global, MemoryScope::All] {
+            let candidates = collect_scoped(&manager, scope).unwrap();
+            assert!(
+                candidates
+                    .iter()
+                    .any(|entry| entry.id == REGISTERED_SKILL_ID)
+            );
+        }
+
+        let without_skills = MemoryManager::new_test().with_skills(false);
+        assert!(
+            collect_scoped(&without_skills, MemoryScope::Global)
+                .unwrap()
+                .iter()
+                .all(|entry| entry.id != REGISTERED_SKILL_ID)
+        );
     });
     match old {
         Some(value) => crate::env::set_var("JCODE_HOME", value),

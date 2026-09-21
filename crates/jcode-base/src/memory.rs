@@ -87,7 +87,6 @@ pub fn register_synthetic_entry_provider(provider: SyntheticEntryProvider) {
         .push(provider);
 }
 
-#[cfg(test)]
 fn collect_synthetic_entries() -> Vec<MemoryEntry> {
     let providers = SYNTHETIC_ENTRY_PROVIDERS
         .read()
@@ -687,7 +686,6 @@ impl MemoryManager {
         Ok(entries)
     }
 
-    #[cfg(test)]
     fn synthetic_skill_entries(&self) -> Vec<MemoryEntry> {
         if !self.include_skills {
             return Vec::new();
@@ -696,10 +694,16 @@ impl MemoryManager {
         collect_synthetic_entries()
     }
 
-    #[cfg(test)]
-    fn collect_retrieval_candidates_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
-        let mut entries = self.collect_memories_scoped(scope)?;
+    pub(crate) fn collect_retrieval_candidates_scoped(
+        &self,
+        scope: MemoryScope,
+    ) -> Result<Vec<MemoryEntry>> {
+        let mut entries = Vec::new();
+        if scope.includes_project() {
+            entries.extend(self.load_project_graph()?.active_memories().cloned());
+        }
         if scope.includes_global() {
+            entries.extend(self.load_global_graph()?.active_memories().cloned());
             entries.extend(self.synthetic_skill_entries());
         }
         Ok(entries)
