@@ -1,4 +1,4 @@
-use super::{AmbientRunnerHandle, ambient_allowed};
+use super::{AmbientRunnerHandle, ReplyPollerTasks, ambient_allowed};
 use crate::ambient::{AmbientStatus, Priority, ScheduleTarget, ScheduledItem};
 use crate::config::Config;
 use crate::message::{Message, Role, StreamEvent, ToolDefinition};
@@ -85,6 +85,62 @@ fn ambient_gate_tracks_config_toggles_and_preserves_disabled_override() {
             "an explicit stop must win even when config enables ambient"
         );
     }
+}
+
+#[tokio::test]
+async fn reply_pollers_follow_the_runtime_ambient_gate() {
+    let _guard = crate::storage::lock_test_env();
+    let _cache = ResetConfigCache;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp.path());
+    let runner = AmbientRunnerHandle::new(Arc::new(crate::safety::SafetySystem::new()));
+    let mut pollers = ReplyPollerTasks::default();
+
+    pollers.reconcile(false, &runner);
+    assert!(!pollers.active);
+
+    pollers.reconcile(true, &runner);
+    assert!(pollers.active);
+
+    pollers.reconcile(false, &runner);
+    assert!(!pollers.active);
+    assert!(pollers.tasks.is_empty());
+}
+
+#[tokio::test]
+async fn disabling_reply_pollers_aborts_existing_tasks() {
+    struct ClearAlive(Arc<AtomicBool>);
+    impl Drop for ClearAlive {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+
+    let alive = Arc::new(AtomicBool::new(true));
+    let task_alive = Arc::clone(&alive);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let _clear_alive = ClearAlive(task_alive);
+        let _ = started_tx.send(());
+        std::future::pending::<()>().await;
+    });
+    started_rx.await.expect("poller task started");
+
+    let mut pollers = ReplyPollerTasks {
+        active: true,
+        tasks: vec![task],
+    };
+    pollers.stop();
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while alive.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("aborted poller task should be dropped");
+    assert!(!pollers.active);
+    assert!(pollers.tasks.is_empty());
 }
 
 #[tokio::test]

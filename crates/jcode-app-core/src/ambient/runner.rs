@@ -62,6 +62,58 @@ struct AmbientRunnerInner {
     active_cycle_queue: RwLock<Option<SoftInterruptQueue>>,
 }
 
+#[derive(Default)]
+struct ReplyPollerTasks {
+    active: bool,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl ReplyPollerTasks {
+    fn reconcile(&mut self, enabled: bool, runner: &AmbientRunnerHandle) {
+        match (enabled, self.active) {
+            (true, false) => self.start(runner),
+            (false, true) => self.stop(),
+            _ => {}
+        }
+    }
+
+    fn start(&mut self, runner: &AmbientRunnerHandle) {
+        let safety_config = config().safety.clone();
+        if safety_config.email_reply_enabled
+            && safety_config.email_imap_host.is_some()
+            && safety_config.email_enabled
+        {
+            let imap_config = safety_config.clone();
+            self.tasks.push(tokio::spawn(async move {
+                crate::notifications::imap_reply_loop(imap_config).await;
+            }));
+            logging::info("Ambient runner: IMAP reply poller spawned");
+        }
+
+        let channel_registry = crate::channel::ChannelRegistry::from_config(&safety_config);
+        self.tasks
+            .extend(channel_registry.spawn_reply_loops(runner));
+        self.active = true;
+        logging::info("Ambient runner: reply pollers enabled");
+    }
+
+    fn stop(&mut self) {
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+        self.active = false;
+        logging::info("Ambient runner: reply pollers disabled");
+    }
+}
+
+impl Drop for ReplyPollerTasks {
+    fn drop(&mut self) {
+        if self.active {
+            self.stop();
+        }
+    }
+}
+
 impl AmbientRunnerHandle {
     pub fn new(safety: Arc<SafetySystem>) -> Self {
         let state = AmbientState::load().unwrap_or_default();
@@ -554,27 +606,7 @@ impl AmbientRunnerHandle {
         }
         logging::info("Ambient runner: starting background loop");
 
-        // Spawn reply pollers only when ambient mode is enabled at startup; scheduled
-        // session-targeted scheduled tasks should still work without the ambient-only reply
-        // infrastructure.
-        if config().ambient.enabled {
-            let safety_config = config().safety.clone();
-            if safety_config.email_reply_enabled
-                && safety_config.email_imap_host.is_some()
-                && safety_config.email_enabled
-            {
-                let imap_config = safety_config.clone();
-                tokio::spawn(async move {
-                    crate::notifications::imap_reply_loop(imap_config).await;
-                });
-                logging::info("Ambient runner: IMAP reply poller spawned");
-            }
-
-            // Spawn reply pollers for all configured message channels
-            // (Telegram, Discord, etc.)
-            let channel_registry = crate::channel::ChannelRegistry::from_config(&safety_config);
-            channel_registry.spawn_reply_loops(&self);
-        }
+        let mut reply_pollers = ReplyPollerTasks::default();
 
         let amb_config = &config().ambient;
         let scheduler_config = AmbientSchedulerConfig {
@@ -593,6 +625,7 @@ impl AmbientRunnerHandle {
             let state = { self.inner.state.read().await.clone() };
 
             let ambient_allowed = ambient_allowed(&state.status);
+            reply_pollers.reconcile(ambient_allowed, &self);
 
             if ambient_allowed {
                 // Update scheduler's user-active state
