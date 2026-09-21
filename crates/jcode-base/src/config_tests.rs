@@ -124,7 +124,6 @@ fn gemini_environment_overrides_config_without_changing_the_file() {
     );
 }
 
-
 #[test]
 fn gemini_invalid_boolean_and_blank_primary_preserve_safe_fallbacks() {
     let _lock = crate::storage::lock_test_env();

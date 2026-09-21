@@ -425,7 +425,6 @@ fn validates_timeout_action_and_command_without_network() {
     }
 }
 
-
 #[test]
 fn repository_root_accepts_only_canonical_workspace_descendants() {
     let workspace = tempfile::tempdir().unwrap();
@@ -458,12 +457,10 @@ fn repository_root_rejects_symlink_escape() {
     let outside = tempfile::tempdir().unwrap();
     symlink(outside.path(), workspace.path().join("linked-repository")).unwrap();
 
-    let error = confined_repository_root(
-        &context(workspace.path()),
-        Path::new("linked-repository"),
-    )
-    .unwrap_err()
-    .to_string();
+    let error =
+        confined_repository_root(&context(workspace.path()), Path::new("linked-repository"))
+            .unwrap_err()
+            .to_string();
     assert!(error.contains("within the session workspace"));
 }
 
