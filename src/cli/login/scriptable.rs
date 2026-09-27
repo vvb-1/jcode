@@ -862,6 +862,10 @@ pub(super) fn resolve_auth_input(value: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the prompt output mirrors one pending-auth record plus its display mode"
+)]
 pub(super) fn emit_scriptable_auth_prompt(
     provider: &str,
     auth_url: &str,

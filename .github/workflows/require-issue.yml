@@ -42,6 +42,14 @@ jobs:
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+
+            // This repository can be configured with GitHub Issues disabled.
+            // Requiring an in-repo issue would then make every PR impossible to merge.
+            if (context.payload.repository?.has_issues === false) {
+              core.info('GitHub Issues are disabled for this repository; skipping linked-issue enforcement.');
+              return;
+            }
+
             const text = `${pr.title || ''}\n\n${pr.body || ''}`;
 
             // Collect candidate issue numbers that belong to THIS repo.
