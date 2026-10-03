@@ -580,15 +580,15 @@ impl App {
                 vec![
                     (
                         "/reset usage limits openai".into(),
-                        "Review an available banked reset (read-only)",
+                        "Granska en tillgänglig sparad återställning (endast läsning)",
                     ),
                     (
                         "/reset usage limits openai confirm".into(),
-                        "Spend the pending banked reset",
+                        "Använd den väntande sparade återställningen",
                     ),
                     (
                         "/reset usage limits openai cancel".into(),
-                        "Clear the pending reset confirmation",
+                        "Rensa den väntande återställningsbekräftelsen",
                     ),
                 ],
             );
