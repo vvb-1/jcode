@@ -68,6 +68,10 @@ const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/terminal-setup", "Fix Shift+Enter newlines"),
     RegisteredCommand::public("/commit", "Make logical commits from current changes"),
     RegisteredCommand::public(
+        "/merge",
+        "Merge current branch into main/master and switch to it (no push)",
+    ),
+    RegisteredCommand::public(
         "/commit-push",
         "Make logical commits from current changes, then push",
     ),
@@ -169,7 +173,7 @@ const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::hidden("/keybindings", "Alias for /keys"),
     RegisteredCommand::public(
         "/diff",
-        "Cycle or set diff display mode (off/inline/full/pinned/file)",
+        "Cycle or set diff display mode (off/inline/full/file)",
     ),
     RegisteredCommand::public(
         "/onboarding-preview",
@@ -204,7 +208,7 @@ const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/logout", "Log out of a provider"),
     RegisteredCommand::public("/account", "Open the combined account picker"),
     RegisteredCommand::public("/accounts", "Alias for /account"),
-    RegisteredCommand::public("/cache", "Show cache stats or set cache TTL"),
+    RegisteredCommand::public("/cache", "Show cache stats; extend/5m saves Anthropic TTL"),
     RegisteredCommand::public("/debug-visual", "Toggle visual debug overlay"),
     RegisteredCommand::public("/screenshot-mode", "Toggle screenshot capture mode"),
     RegisteredCommand::public("/screenshot", "Capture a screenshot debug state"),
@@ -506,6 +510,19 @@ impl App {
     pub(super) fn get_suggestions_for(&self, input: &str) -> Vec<(String, &'static str)> {
         let input = input.trim_start();
 
+        if crate::tui::is_ssh_remote() {
+            // Do not enumerate local account labels, projects, or goals while
+            // completing a command intended for a different host.
+            if input.starts_with("/model ") || input.starts_with("/models ") {
+                return self.rank_suggestions(input, self.model_suggestion_candidates());
+            }
+            return if input.starts_with('/') {
+                self.rank_suggestions(input, self.command_candidates())
+            } else {
+                Vec::new()
+            };
+        }
+
         // Only show suggestions when input starts with /
         if !input.starts_with('/') {
             return vec![];
@@ -540,7 +557,10 @@ impl App {
                     ("/agents swarm".into(), "Configure swarm/subagent model"),
                     ("/agents review".into(), "Configure code review model"),
                     ("/agents judge".into(), "Configure judge model"),
-                    ("/agents memory".into(), "Configure memory sidecar model"),
+                    (
+                        "/agents memory".into(),
+                        "Configure optional memory extraction model",
+                    ),
                     ("/agents ambient".into(), "Configure ambient model"),
                 ],
             );
@@ -747,7 +767,17 @@ impl App {
         }
 
         if prefix.starts_with("/effort ") {
-            let efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+            let efforts = [
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "swarm",
+                "swarm-deep",
+            ];
             return self.rank_suggestions(
                 input,
                 efforts
@@ -815,8 +845,9 @@ impl App {
             let suggestions = vec![
                 ("/cache stats".into(), "Show KV cache stats"),
                 ("/cache status".into(), "Alias for /cache stats"),
-                ("/cache 1h".into(), "Use 1 hour cache TTL"),
-                ("/cache 5m".into(), "Use 5 minute cache TTL"),
+                ("/cache extend".into(), "Save 1 hour Anthropic cache TTL"),
+                ("/cache 1h".into(), "Save 1 hour Anthropic cache TTL"),
+                ("/cache 5m".into(), "Save 5 minute Anthropic cache TTL"),
             ];
             return self.rank_suggestions(input, suggestions);
         }
@@ -1334,6 +1365,9 @@ impl App {
     /// suggestion prompts (brand-new install / unauthenticated / new user) so
     /// the welcome layout and the suggestions stay in sync.
     pub fn onboarding_welcome_active(&self) -> bool {
+        if crate::tui::is_ssh_remote() {
+            return false;
+        }
         if self.onboarding_preview_mode {
             return true;
         }
@@ -1443,6 +1477,9 @@ impl App {
     /// Get suggestion prompts for new users on the initial empty screen.
     /// Returns (label, prompt_text) pairs. Empty once user is experienced or not authenticated.
     pub fn suggestion_prompts(&self) -> Vec<(String, String)> {
+        if crate::tui::is_ssh_remote() {
+            return Vec::new();
+        }
         let preview_mode = self.onboarding_preview_mode;
         let is_canary = if self.is_remote {
             self.remote_is_canary.unwrap_or(self.session.is_canary)

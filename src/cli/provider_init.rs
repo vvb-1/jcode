@@ -40,6 +40,8 @@ pub enum ProviderChoice {
     )]
     OpenaiApi,
     Openrouter,
+    #[value(alias = "orca-router")]
+    Orcarouter,
     #[value(alias = "aws-bedrock", alias = "aws_bedrock")]
     Bedrock,
     #[value(alias = "azure-openai", alias = "aoai")]
@@ -88,6 +90,8 @@ pub enum ProviderChoice {
     Deepinfra,
     #[value(alias = "fireworks-ai", alias = "fireworks.ai")]
     Fireworks,
+    #[value(alias = "novita-ai", alias = "novita.ai")]
+    Novita,
     #[value(alias = "minimax-ai", alias = "minimaxi")]
     Minimax,
     #[value(alias = "x.ai", alias = "x-ai", alias = "grok")]
@@ -152,6 +156,7 @@ impl ProviderChoice {
             Self::Openai => "openai",
             Self::OpenaiApi => "openai-api",
             Self::Openrouter => "openrouter",
+            Self::Orcarouter => "orcarouter",
             Self::Bedrock => "bedrock",
             Self::Azure => "azure",
             Self::Opencode => "opencode",
@@ -177,6 +182,7 @@ impl ProviderChoice {
             Self::TogetherAi => "togetherai",
             Self::Deepinfra => "deepinfra",
             Self::Fireworks => "fireworks",
+            Self::Novita => "novita",
             Self::Minimax => "minimax",
             Self::Xai => "xai",
             Self::GrokBuild => "grok-build",
@@ -231,6 +237,10 @@ const PROVIDER_CHOICE_LOGIN_PROVIDERS: &[(ProviderChoice, LoginProviderDescripto
     (
         ProviderChoice::Openrouter,
         crate::provider_catalog::OPENROUTER_LOGIN_PROVIDER,
+    ),
+    (
+        ProviderChoice::Orcarouter,
+        crate::provider_catalog::ORCAROUTER_LOGIN_PROVIDER,
     ),
     (
         ProviderChoice::Bedrock,
@@ -331,6 +341,10 @@ const PROVIDER_CHOICE_LOGIN_PROVIDERS: &[(ProviderChoice, LoginProviderDescripto
     (
         ProviderChoice::Fireworks,
         crate::provider_catalog::FIREWORKS_LOGIN_PROVIDER,
+    ),
+    (
+        ProviderChoice::Novita,
+        crate::provider_catalog::NOVITA_LOGIN_PROVIDER,
     ),
     (
         ProviderChoice::Minimax,
@@ -1014,7 +1028,7 @@ fn ensure_gemini_auth_allowed_for_explicit_choice() -> Result<()> {
     // An official Gemini Developer API key (GEMINI_API_KEY) authenticates
     // directly against generativelanguage.googleapis.com and needs no OAuth
     // consent flow, so allow it without further prompting.
-    if auth::gemini::has_api_key() {
+    if auth::gemini::uses_api_key() {
         return Ok(());
     }
     if auth::gemini::load_tokens().is_ok() {
@@ -1054,7 +1068,7 @@ fn ensure_gemini_auth_allowed_for_explicit_choice() -> Result<()> {
 
 fn maybe_enable_gemini_auth_for_auto(has_other_provider: bool) -> Result<bool> {
     // A configured Gemini Developer API key is sufficient on its own.
-    if auth::gemini::has_api_key() {
+    if auth::gemini::uses_api_key() {
         return Ok(true);
     }
     if auth::gemini::load_tokens().is_ok() {
@@ -1520,7 +1534,7 @@ async fn init_provider_with_options(
         ProviderChoice::Gemini => {
             disable_subscription_runtime_mode();
             ensure_gemini_auth_allowed_for_explicit_choice()?;
-            if auth::gemini::has_api_key() {
+            if auth::gemini::uses_api_key() {
                 init_notice(
                     "Using Gemini provider (official Gemini Developer API key, generativelanguage.googleapis.com)",
                 );
@@ -1565,6 +1579,7 @@ async fn init_provider_with_options(
             Arc::new(multi)
         }
         ProviderChoice::Opencode
+        | ProviderChoice::Orcarouter
         | ProviderChoice::OpencodeGo
         | ProviderChoice::Zai
         | ProviderChoice::Ai302
@@ -1587,6 +1602,7 @@ async fn init_provider_with_options(
         | ProviderChoice::TogetherAi
         | ProviderChoice::Deepinfra
         | ProviderChoice::Fireworks
+        | ProviderChoice::Novita
         | ProviderChoice::Minimax
         | ProviderChoice::Xai
         | ProviderChoice::NvidiaNim

@@ -624,7 +624,8 @@ pub fn memory_score(entry: &MemoryEntry) -> f64 {
     score
 }
 
-fn selected_entries_for_prompt(entries: &[MemoryEntry], limit: usize) -> Vec<&MemoryEntry> {
+/// Return the active, content-distinct entries that prompt formatting will render.
+pub fn selected_entries_for_prompt(entries: &[MemoryEntry], limit: usize) -> Vec<&MemoryEntry> {
     let mut selected = Vec::new();
     let mut seen_content = HashSet::new();
 

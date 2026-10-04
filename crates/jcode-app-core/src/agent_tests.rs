@@ -8,6 +8,18 @@ use async_trait::async_trait;
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+#[path = "agent_tests/concurrency.rs"]
+mod concurrency;
+
+#[path = "agent_tests/concurrency_construction.rs"]
+mod concurrency_construction;
+
+#[path = "agent_tests/desktop_selfdev.rs"]
+mod desktop_selfdev;
+
+#[path = "agent_tests/compile_remote.rs"]
+mod compile_remote;
+
 struct DelayedProvider {
     open_delay: Duration,
     first_event_delay: Duration,
@@ -16,6 +28,120 @@ struct DelayedProvider {
 struct NativeAutoCompactionProvider;
 
 struct NativeCompactionStreamProvider;
+
+#[derive(Clone, Default)]
+struct SignatureSessionProvider {
+    requests: Arc<std::sync::Mutex<Vec<Vec<Message>>>>,
+}
+
+#[async_trait]
+impl Provider for SignatureSessionProvider {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        let first = {
+            let mut requests = self.requests.lock().unwrap();
+            requests.push(messages.to_vec());
+            requests.len() == 1
+        };
+        let mut events = vec![StreamEvent::SessionId("provider-resume-handle".into())];
+        if first {
+            events.extend([
+                StreamEvent::ToolUseStart {
+                    id: "signed-call".into(),
+                    name: "provider_owned_probe".into(),
+                },
+                StreamEvent::ToolInputDelta("{}".into()),
+                StreamEvent::ToolUseEnd,
+                StreamEvent::ToolUseSignature("test-thought-signature".into()),
+                StreamEvent::ToolResult {
+                    tool_use_id: "signed-call".into(),
+                    content: "done".into(),
+                    is_error: false,
+                },
+            ]);
+        }
+        events.extend([
+            StreamEvent::TextDelta("completed".into()),
+            StreamEvent::MessageEnd {
+                stop_reason: Some("end_turn".into()),
+            },
+        ]);
+        Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+    }
+
+    fn name(&self) -> &str {
+        "signature-session-test"
+    }
+    fn handles_tools_internally(&self) -> bool {
+        true
+    }
+    fn supports_compaction(&self) -> bool {
+        false
+    }
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(self.clone())
+    }
+}
+
+#[tokio::test]
+async fn mpsc_preserves_signatures_and_never_rebinds_to_provider_session_id() {
+    let _lock = crate::storage::lock_test_env();
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            if let Some(home) = &self.0 {
+                crate::env::set_var("JCODE_HOME", home);
+            } else {
+                crate::env::remove_var("JCODE_HOME");
+            }
+            crate::config::Config::invalidate_cache();
+        }
+    }
+    let home = tempfile::tempdir().unwrap();
+    let _restore = RestoreHome(std::env::var_os("JCODE_HOME"));
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::config::Config::invalidate_cache();
+    let provider = Arc::new(SignatureSessionProvider::default());
+    let mut agent = Agent::new(provider.clone(), Registry::empty());
+    let jcode_id = agent.session_id().to_string();
+    for prompt in ["first turn", "second turn"] {
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: prompt.into(),
+                cache_control: None,
+            }],
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        agent.run_turn_streaming_mpsc(tx).await.unwrap();
+        while let Ok(event) = rx.try_recv() {
+            if let ServerEvent::SessionId { session_id } = event {
+                assert_eq!(
+                    session_id, jcode_id,
+                    "provider handle must not replace jcode identity"
+                );
+            }
+        }
+    }
+    assert_eq!(agent.session_id(), jcode_id);
+    let saved = Session::load(&jcode_id).unwrap();
+    assert_eq!(
+        saved.provider_session_id.as_deref(),
+        Some("provider-resume-handle")
+    );
+    let requests = provider.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].iter().flat_map(|message| &message.content).any(|block| matches!(
+        block, ContentBlock::ToolUse { thought_signature: Some(signature), .. } if signature == "test-thought-signature"
+    )), "second request must replay the persisted signature");
+    let saved_json = serde_json::to_value(&saved).unwrap();
+    assert!(saved_json.to_string().contains("test-thought-signature"));
+}
 
 #[derive(Clone)]
 struct ExplicitPinProvider {
@@ -87,6 +213,102 @@ fn content_text(content: &[ContentBlock]) -> &str {
 
 fn message_text(message: &Message) -> &str {
     content_text(&message.content)
+}
+
+#[test]
+fn agent_drop_removes_its_configured_session_tool_policy() {
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let session = Session::create(None, None);
+    let session_id = session.id.clone();
+    let agent = Agent::new_with_session(
+        provider,
+        Registry::empty(),
+        session,
+        Some(HashSet::from(["bash".to_string()])),
+    );
+
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&session_id, "bash"),
+        Some(true)
+    );
+    drop(agent);
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&session_id, "bash"),
+        None,
+        "dropping the Agent must remove its global policy entry"
+    );
+}
+
+#[test]
+fn stale_agent_drop_preserves_successor_session_tool_policy() {
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let first_session = Session::create(None, None);
+    let session_id = first_session.id.clone();
+    let first = Agent::new_with_session(
+        provider.clone(),
+        Registry::empty(),
+        first_session,
+        Some(HashSet::from(["bash".to_string()])),
+    );
+    let mut successor_session = Session::create(None, None);
+    successor_session.id.clone_from(&session_id);
+    let successor = Agent::new_with_session(
+        provider,
+        Registry::empty(),
+        successor_session,
+        Some(HashSet::from(["read".to_string()])),
+    );
+
+    drop(first);
+
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&session_id, "read"),
+        Some(true),
+        "a stale Agent must not remove its active successor's policy"
+    );
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&session_id, "bash"),
+        Some(false),
+        "the surviving entry must be the successor's configured policy"
+    );
+    drop(successor);
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&session_id, "read"),
+        None
+    );
+}
+
+#[test]
+fn agent_clear_moves_tool_policy_registration_to_new_session() {
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let session = Session::create(None, None);
+    let previous_session_id = session.id.clone();
+    let mut agent = Agent::new_with_session(
+        provider,
+        Registry::empty(),
+        session,
+        Some(HashSet::from(["bash".to_string()])),
+    );
+
+    agent.clear();
+    let new_session_id = agent.session.id.clone();
+
+    assert_ne!(previous_session_id, new_session_id);
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&previous_session_id, "bash"),
+        None,
+        "changing sessions must remove the former ID's policy"
+    );
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&new_session_id, "bash"),
+        Some(true),
+        "the new session must retain the Agent's configured policy"
+    );
+    drop(agent);
+    assert_eq!(
+        crate::tool::session_tool_policy_allows_tool_for_test(&new_session_id, "bash"),
+        None
+    );
 }
 
 #[async_trait]
@@ -178,6 +400,17 @@ impl Provider for NativeCompactionStreamProvider {
     ) -> Result<EventStream> {
         let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(4);
         tokio::spawn(async move {
+            // Response usage is deliberately far below the provider-reported
+            // pre-compaction size so a regression that relabels usage as
+            // `pre_tokens` is caught (#1178).
+            let _ = tx
+                .send(Ok(StreamEvent::TokenUsage {
+                    input_tokens: Some(24_000),
+                    output_tokens: Some(10),
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                }))
+                .await;
             let _ = tx
                 .send(Ok(StreamEvent::Compaction {
                     trigger: "openai_native".to_string(),
@@ -308,7 +541,7 @@ async fn run_turn_streaming_mpsc_emits_keepalive_while_provider_is_quiet() {
     let keepalive_deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < keepalive_deadline {
         match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-            Ok(Some(ServerEvent::Pong { id })) => {
+            Ok(Some(ServerEvent::Pong { id, .. })) => {
                 assert_eq!(id, STREAM_KEEPALIVE_PONG_ID);
                 saw_keepalive = true;
                 break;
@@ -337,7 +570,7 @@ async fn run_turn_streaming_mpsc_emits_keepalive_while_provider_is_quiet() {
                 saw_text = true;
                 break;
             }
-            Ok(Some(ServerEvent::Pong { id })) => {
+            Ok(Some(ServerEvent::Pong { id, .. })) => {
                 assert_eq!(id, STREAM_KEEPALIVE_PONG_ID);
             }
             Ok(Some(_)) => {}
@@ -376,11 +609,17 @@ async fn run_turn_streaming_mpsc_emits_native_compaction_for_client_cache_reset(
     while let Ok(event) = rx.try_recv() {
         if let ServerEvent::Compaction {
             trigger,
+            pre_tokens,
             messages_compacted,
             ..
         } = event
         {
             assert_eq!(trigger, "openai_native");
+            assert_eq!(
+                pre_tokens,
+                Some(80_000),
+                "remote compaction must forward the provider's pre-compaction count"
+            );
             assert!(
                 messages_compacted.is_some_and(|count| count > 0),
                 "native compaction should report a non-empty compacted prefix"
@@ -793,6 +1032,60 @@ async fn gmail_is_exposed_by_default_and_can_be_explicitly_disabled() {
         .validate_tool_allowed(tool_name)
         .expect("gmail must be executable by default");
 
+    agent
+        .validate_tool_allowed("jcode_docs")
+        .expect("jcode_docs must be executable in regular sessions");
+    agent.set_canary("docs-tool-regression");
+    let definitions = agent.tool_definitions().await;
+    assert!(definitions.iter().any(|tool| tool.name == "selfdev"));
+    assert!(
+        !definitions.iter().any(|tool| tool.name == "jcode_docs"),
+        "jcode_docs must not be model-visible in self-dev sessions"
+    );
+    assert!(
+        !agent
+            .tool_definitions()
+            .await
+            .iter()
+            .any(|tool| tool.name == "jcode_docs"),
+        "cached provider definitions must also exclude bundled docs"
+    );
+    assert!(
+        !agent
+            .tool_names()
+            .await
+            .iter()
+            .any(|name| name == "jcode_docs"),
+        "debug tool introspection must agree with provider definitions"
+    );
+    assert!(
+        agent
+            .execute_tool("jcode_docs", serde_json::json!({"action": "list"}))
+            .await
+            .is_err(),
+        "direct execution must reject bundled docs in self-dev mode"
+    );
+    assert!(
+        agent
+            .validate_tool_allowed("jcode_docs")
+            .expect_err("jcode_docs must not be executable in self-dev sessions")
+            .to_string()
+            .contains("disabled in self-development mode")
+    );
+    agent.session.is_canary = false;
+    agent.unlock_tools();
+    assert!(
+        agent
+            .tool_definitions()
+            .await
+            .iter()
+            .any(|tool| tool.name == "jcode_docs"),
+        "jcode_docs must remain available after leaving self-dev mode"
+    );
+    agent
+        .validate_tool_allowed("jcode_docs")
+        .expect("jcode_docs must be executable again outside self-dev mode");
+
     crate::env::set_var("JCODE_DISABLED_TOOLS", tool_name);
     crate::config::Config::invalidate_cache();
 
@@ -1019,19 +1312,49 @@ async fn restore_session_rehydrates_injected_memory_ids() {
 #[tokio::test]
 async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop() {
     let _guard = crate::storage::lock_test_env();
+    struct RestoreMemoryHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreMemoryHome {
+        fn drop(&mut self) {
+            crate::memory::clear_all_pending_memory();
+            match &self.0 {
+                Some(home) => crate::env::set_var("JCODE_HOME", home),
+                None => crate::env::remove_var("JCODE_HOME"),
+            }
+            crate::config::Config::invalidate_cache();
+        }
+    }
+    let home = tempfile::tempdir().expect("isolated memory home");
+    let _restore = RestoreMemoryHome(std::env::var_os("JCODE_HOME"));
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::config::Config::invalidate_cache();
     crate::memory::clear_all_pending_memory();
 
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let registry = Registry::new(provider.clone()).await;
-    let agent = Agent::new(provider, registry);
+    let mut agent = Agent::new(provider, registry);
+    agent.memory_enabled = true;
+    let project = home.path().join("project");
+    std::fs::create_dir(&project).expect("isolated project");
+    agent.session.working_dir = Some(project.to_string_lossy().into_owned());
     let session_id = agent.session.id.clone();
 
-    crate::memory::set_pending_memory_with_ids(
+    let entry =
+        crate::memory::MemoryEntry::new(crate::memory::MemoryCategory::Fact, "remember this later");
+    crate::memory::MemoryManager::new()
+        .with_project_dir(&project)
+        .remember_project(entry.clone())
+        .expect("persist the selected memory for scoped revalidation");
+    let prompt = crate::memory::format_relevant_prompt(std::slice::from_ref(&entry), 1)
+        .expect("canonical memory prompt");
+    crate::memory::set_pending_memory_for_project(
         &session_id,
-        "remember this later".to_string(),
+        prompt.clone(),
         1,
-        vec!["memory-deferred".to_string()],
+        vec![entry.id.clone()],
+        None,
+        agent.session.working_dir.as_deref(),
     );
+    assert!(crate::memory::has_pending_memory(&session_id));
 
     let tool_loop_messages = vec![
         Message::user("hello"),
@@ -1052,6 +1375,7 @@ async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop(
     let pending = agent.build_memory_prompt_nonblocking(&tool_loop_messages, None);
     assert!(pending.is_none(), "memory should not inject mid tool loop");
     assert!(crate::memory::has_pending_memory(&session_id));
+    assert!(!crate::memory::is_memory_injected(&session_id, &entry.id));
 
     let next_turn_messages = vec![Message::user("follow up")];
     let pending = agent.build_memory_prompt_nonblocking(&next_turn_messages, None);
@@ -1059,6 +1383,10 @@ async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop(
         pending.is_some(),
         "memory should inject on the next real user turn"
     );
+    let pending = pending.unwrap();
+    assert_eq!(pending.prompt, prompt);
+    assert_eq!(pending.memory_ids, vec![entry.id.clone()]);
+    assert!(crate::memory::is_memory_injected(&session_id, &entry.id));
     assert!(!crate::memory::has_pending_memory(&session_id));
 
     crate::memory::clear_all_pending_memory();

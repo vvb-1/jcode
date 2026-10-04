@@ -30,8 +30,8 @@ mod workspace;
 #[cfg(test)]
 pub(super) use key_handling::reload_stale_remote_server_before_update;
 use queue_recovery::{
-    recover_local_interleave_to_queue, recover_stranded_soft_interrupts,
-    recover_undelivered_queued_continuation,
+    recover_local_interleave_to_queue, recover_rejected_queued_continuation,
+    recover_stranded_soft_interrupts, recover_undelivered_queued_continuation,
 };
 // Re-export for sibling modules and tests that access reconnect state and helpers
 // through `super::remote::*` without reaching into private submodules directly.
@@ -87,6 +87,7 @@ pub(super) enum RemoteEventOutcome {
 }
 
 pub(super) async fn handle_tick(app: &mut App, remote: &mut RemoteConnection) -> bool {
+    app.refresh_terminal_title_metrics();
     crate::tui::ui::set_frame_input_attribution(crate::tui::ui::FrameInputAttribution {
         event: Some("tick".to_string()),
         scroll_delta: None,
@@ -96,6 +97,8 @@ pub(super) async fn handle_tick(app: &mut App, remote: &mut RemoteConnection) ->
             .is_some_and(|state| state.kind == crate::tui::PickerKind::Model),
     });
     let mut needs_redraw = crate::tui::periodic_redraw_required(app);
+    needs_redraw |= app.poll_ssh_login(remote).await;
+    needs_redraw |= app.poll_ssh_login_onboarding();
     needs_redraw |= app.flush_pending_resize_redraw();
     app.maybe_capture_runtime_memory_heartbeat();
     app.maybe_release_idle_heap();
@@ -392,7 +395,7 @@ async fn apply_terminal_event(
     };
     match event {
         Some(Ok(Event::FocusGained)) => {
-            crate::tui::reapply_configured_terminal_modes();
+            crate::tui::reapply_configured_terminal_modes_after_focus();
             input_attribution.event = Some("focus_gained".to_string());
             needs_redraw |= app.set_client_focused(true);
             app.note_client_focus(true);
@@ -405,7 +408,11 @@ async fn apply_terminal_event(
             // Start the key-to-paint clock at the moment the key is read, which is
             // the only point that corresponds to the user's press.
             crate::tui::ui::note_key_event_read();
-            input_attribution.event = Some(format!("key:{:?}:{:?}", key.code, key.kind));
+            input_attribution.event = Some(if app.remote_login.is_some() {
+                "ssh_login_key".to_string()
+            } else {
+                format!("key:{:?}:{:?}", key.code, key.kind)
+            });
             input_attribution.scroll_delta = key_scroll_delta(&key);
             app.note_client_interaction();
             app.update_copy_badge_key_event(key);
@@ -609,6 +616,10 @@ pub(super) async fn handle_bus_event(
             true
         }
         Ok(BusEvent::LoginCompleted(login)) => {
+            if crate::tui::is_ssh_remote() {
+                app.set_status_notice("Local login does not change SSH server credentials");
+                return true;
+            }
             let success = login.success && login.provider != "copilot_code";
             let provider_hint = auth_provider_hint_for_login_provider(&login.provider);
             let auth = auth_changed_event_for_login_provider(&login.provider);
@@ -769,7 +780,7 @@ fn handle_terminal_event_while_disconnected(
 
     match event {
         Some(Ok(Event::FocusGained)) => {
-            crate::tui::reapply_configured_terminal_modes();
+            crate::tui::reapply_configured_terminal_modes_after_focus();
             needs_redraw |= app.set_client_focused(true);
             app.note_client_focus(true);
         }
@@ -1343,6 +1354,11 @@ pub(super) async fn process_remote_followups(app: &mut App, remote: &mut RemoteC
     }
 
     let synthetic_startup_dispatch = app.is_processing
+        // Only a locally staged send is synthetic. A resumed/external turn
+        // has no request id either, and its resume marker is cleared as soon
+        // as live stream events arrive. Never demote that running turn just
+        // because a follow-up is queued.
+        && matches!(app.status, ProcessingStatus::Sending)
         && app.current_message_id.is_none()
         && app.remote_resume_activity.is_none()
         && (app.submit_input_on_startup
@@ -1897,6 +1913,10 @@ fn handle_disconnected_key_internal(
     let mut code = code;
     let mut modifiers = modifiers;
     ctrl_bracket_fallback_to_esc(&mut code, &mut modifiers);
+
+    if app.handle_ssh_login_key(code, modifiers, text_input.as_deref()) {
+        return Ok(());
+    }
 
     if input::handle_scroll_overlay_key(app, code)? {
         return Ok(());

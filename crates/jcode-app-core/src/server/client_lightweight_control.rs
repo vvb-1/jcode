@@ -1,3 +1,4 @@
+use super::client_actions::{NotifySessionContext, handle_notify_session};
 use super::client_comm::{
     handle_comm_channel_members, handle_comm_list, handle_comm_list_channels, handle_comm_message,
     handle_comm_read, handle_comm_share, handle_comm_subscribe_channel,
@@ -103,7 +104,14 @@ pub(super) async fn handle_lightweight_control_request(
         swarm_mutation_runtime,
     } = context;
     if let Request::Ping { id } = request {
-        write_direct_event(&writer, &ServerEvent::Pong { id }).await?;
+        write_direct_event(
+            &writer,
+            &ServerEvent::Pong {
+                id,
+                native_ssh_protocol: Some(1),
+            },
+        )
+        .await?;
         return Ok(());
     }
 
@@ -127,6 +135,31 @@ pub(super) async fn handle_lightweight_control_request(
     });
 
     match request {
+        // Scheduled delivery opens a one-shot connection and names the target
+        // session explicitly. Reuse its live agent, not a new subscribed agent.
+        Request::NotifySession {
+            id,
+            session_id,
+            message,
+        } => {
+            handle_notify_session(
+                id,
+                session_id,
+                message,
+                NotifySessionContext {
+                    sessions,
+                    soft_interrupt_queues,
+                    client_connections,
+                    swarm_members,
+                    swarms_by_id,
+                    event_history,
+                    event_counter,
+                    swarm_event_tx,
+                    client_event_tx: &client_event_tx,
+                },
+            )
+            .await;
+        }
         Request::CommShare {
             id,
             session_id: req_session_id,
@@ -408,6 +441,7 @@ pub(super) async fn handle_lightweight_control_request(
             initial_message,
             request_nonce,
             spawn_mode,
+            model,
             effort,
             label,
         } => {
@@ -422,6 +456,7 @@ pub(super) async fn handle_lightweight_control_request(
                 initial_message,
                 request_nonce,
                 spawn_mode,
+                model,
                 effort,
                 label,
                 &client_event_tx,
@@ -658,6 +693,7 @@ pub(super) async fn handle_lightweight_control_request(
             prefer_spawn,
             spawn_if_needed,
             message,
+            model,
             effort,
         } => {
             handle_comm_assign_next(
@@ -668,6 +704,7 @@ pub(super) async fn handle_lightweight_control_request(
                 prefer_spawn,
                 spawn_if_needed,
                 message,
+                model,
                 effort,
                 &client_event_tx,
                 sessions,

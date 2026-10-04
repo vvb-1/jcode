@@ -125,6 +125,14 @@ pub(crate) fn invalidate_ambient_info_cache() {
 pub(crate) fn open_path_or_url_detached(
     target: impl AsRef<std::ffi::OsStr>,
 ) -> std::io::Result<()> {
+    if crate::tui::is_ssh_remote() {
+        let target = target.as_ref().to_string_lossy();
+        if !target.starts_with("https://") && !target.starts_with("http://") {
+            return Err(std::io::Error::other(
+                "remote file opening is unavailable over SSH; open it on the remote host or ask the agent to read it",
+            ));
+        }
+    }
     if crate::auth::browser_suppressed(false) {
         return Err(std::io::Error::other(
             "opening files/URLs is suppressed (NO_BROWSER/JCODE_NO_BROWSER or test harness)",
@@ -214,15 +222,8 @@ pub(super) fn ctrl_bracket_fallback_to_esc(code: &mut KeyCode, modifiers: &mut K
     if !modifiers.contains(KeyModifiers::CONTROL) {
         return;
     }
-    match code {
-        KeyCode::Esc => {
-            *code = KeyCode::Char('[');
-        }
-        KeyCode::Char('5') => {
-            // Legacy tty mapping for Ctrl+]
-            *code = KeyCode::Char(']');
-        }
-        _ => {}
+    if *code == KeyCode::Esc {
+        *code = KeyCode::Char('[');
     }
 }
 
@@ -518,10 +519,29 @@ fn copy_to_clipboard_osc52(text: &str) -> bool {
     out.write_all(seq.as_bytes()).is_ok() && out.flush().is_ok()
 }
 
-pub(super) fn effort_display_label(effort: &str) -> &str {
+pub(crate) fn effort_display_label(effort: &str) -> &str {
+    effort_display_label_with_root(effort, crate::prompt::swarm_root_reasoning_effort(effort))
+}
+
+// Keep finite, validated effort labels static so autocomplete can share them
+// without allocations or leaking dynamically formatted strings.
+fn effort_display_label_with_root<'a>(effort: &'a str, root: Option<&str>) -> &'a str {
+    macro_rules! swarm_label {
+        ($mode:literal, $detail:literal) => {
+            match root.unwrap_or("max") {
+                "none" => concat!($mode, " (None + ", $detail, ") [Beta]"),
+                "minimal" => concat!($mode, " (Minimal + ", $detail, ") [Beta]"),
+                "low" => concat!($mode, " (Low + ", $detail, ") [Beta]"),
+                "medium" => concat!($mode, " (Medium + ", $detail, ") [Beta]"),
+                "high" => concat!($mode, " (High + ", $detail, ") [Beta]"),
+                "xhigh" => concat!($mode, " (xHigh + ", $detail, ") [Beta]"),
+                _ => concat!($mode, " (Max + ", $detail, ") [Beta]"),
+            }
+        };
+    }
     match effort {
-        "swarm" => "Swarm (light fan-out) [Beta]",
-        "swarm-deep" => "Swarm Deep (Max + task graph) [Beta]",
+        "swarm" => swarm_label!("Swarm", "light fan-out"),
+        "swarm-deep" => swarm_label!("Swarm Deep", "task graph"),
         "max" => "Max",
         "xhigh" => "xHigh",
         "high" => "High",
@@ -1071,7 +1091,22 @@ pub(super) fn encode_rgba_as_png(width: usize, height: usize, rgba: &[u8]) -> Op
     Some(buf)
 }
 
+#[cfg(test)]
 pub(super) fn gather_git_info() -> Option<GitInfo> {
+    if crate::tui::is_ssh_remote() {
+        return None;
+    }
+    GIT_INFO_CACHE
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().and_then(|(_, cached, _)| cached.clone()))
+}
+
+#[cfg(not(test))]
+pub(super) fn gather_git_info() -> Option<GitInfo> {
+    if crate::tui::is_ssh_remote() {
+        return None;
+    }
     use std::time::Instant;
 
     const TTL: Duration = Duration::from_secs(5);
@@ -1112,6 +1147,9 @@ pub(super) fn gather_git_info() -> Option<GitInfo> {
 pub(super) fn gather_todos_and_goals_for_session(
     session_id: Option<&str>,
 ) -> (Vec<TodoItem>, Vec<crate::todo::TodoGoal>) {
+    if crate::tui::is_ssh_remote() {
+        return (Vec::new(), Vec::new());
+    }
     use std::time::Instant;
 
     const TTL: Duration = Duration::from_secs(1);
@@ -1168,6 +1206,12 @@ pub(super) fn gather_todos_and_goals_for_session(
 }
 
 pub(super) fn gather_ambient_info(ambient_enabled: bool) -> Option<AmbientWidgetData> {
+    if crate::tui::is_ssh_remote() {
+        // The cache and queue are laptop-local. The native protocol does not
+        // currently carry remote scheduler state, so leave both widget/footer
+        // absent instead of displaying unrelated local tasks.
+        return None;
+    }
     use std::time::Instant;
     const TTL: Duration = Duration::from_secs(2);
 
@@ -1311,6 +1355,7 @@ pub(crate) fn format_countdown_until(target: chrono::DateTime<chrono::Utc>) -> S
     }
 }
 
+#[cfg(not(test))]
 fn gather_git_info_inner() -> Option<GitInfo> {
     use std::process::Command;
 

@@ -430,6 +430,37 @@ fn apply_kimi_coding_agent_headers(
     }
 }
 
+/// Hosts that require the `x-opencode-session` header (issue #1167).
+fn is_opencode_api_base(api_base: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(api_base) else {
+        return false;
+    };
+    matches!(
+        url.host_str(),
+        Some(host) if host == "opencode.ai" || host.ends_with(".opencode.ai")
+    )
+}
+
+pub(crate) fn new_conversation_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// OpenCode Go/Zen require a stable per-conversation `x-opencode-session`
+/// header on inference requests (rejected from 2026-09-05 without it).
+fn apply_opencode_session_header(
+    req: reqwest::RequestBuilder,
+    api_base: &str,
+    conversation_id: &str,
+) -> reqwest::RequestBuilder {
+    if is_opencode_api_base(api_base) {
+        req.header(OPENCODE_SESSION_HEADER, conversation_id)
+    } else {
+        req
+    }
+}
+
+pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+
 #[derive(Debug, Clone)]
 enum ProviderAuth {
     AuthorizationBearer {
@@ -895,6 +926,10 @@ pub struct OpenRouterProvider {
     /// Missing entries mean unspecified and preserve the provider-level fallback.
     static_image_input_support: HashMap<String, bool>,
     send_openrouter_headers: bool,
+    /// Stable per-conversation identifier sent as `x-opencode-session` to
+    /// OpenCode (Zen / Go) endpoints, which require it for routing (issue #1167).
+    /// Each provider instance (and each `fork()`) gets a fresh UUID.
+    conversation_id: String,
     models_cache: Arc<RwLock<ModelsCache>>,
     model_catalog_refresh: Arc<Mutex<ModelCatalogRefreshState>>,
     /// Provider routing preferences
@@ -908,6 +943,46 @@ pub struct OpenRouterProvider {
 }
 
 impl OpenRouterProvider {
+    /// Apply a real (already resolved) effort without changing the stored swarm mode.
+    fn apply_resolved_reasoning_effort(
+        &self,
+        request: &mut Value,
+        effort: &str,
+        strict_openai_schema: bool,
+    ) -> bool {
+        if self.supports_deepseek_reasoning_effort() {
+            let effort = match effort {
+                "minimal" => "low",
+                "xhigh" => "high",
+                other => other,
+            };
+            if effort == "none" {
+                return false;
+            }
+            request["reasoning_effort"] = serde_json::json!(effort);
+        } else if self.supports_openai_reasoning_effort() {
+            // Strict endpoints such as Mistral reject the UX alias `max`.
+            let effort = if strict_openai_schema && effort == "max" {
+                "xhigh"
+            } else {
+                effort
+            };
+            if effort == "none" {
+                return false;
+            }
+            request["reasoning_effort"] = serde_json::json!(effort);
+        } else if Self::profile_supports_unified_reasoning(
+            self.profile_id.as_deref(),
+            self.send_openrouter_headers,
+        ) {
+            let effort = if effort == "max" { "xhigh" } else { effort };
+            request["reasoning"] = serde_json::json!({"effort": effort});
+        } else {
+            return false;
+        }
+        true
+    }
+
     fn profile_supports_reasoning_effort(profile_id: Option<&str>) -> bool {
         matches!(profile_id, Some(id) if id.eq_ignore_ascii_case("deepseek"))
     }
@@ -1432,6 +1507,7 @@ impl OpenRouterProvider {
             static_context_limits,
             static_image_input_support,
             send_openrouter_headers: false,
+            conversation_id: new_conversation_id(),
             models_cache: Arc::new(RwLock::new(ModelsCache::default())),
             model_catalog_refresh: Arc::new(Mutex::new(ModelCatalogRefreshState::default())),
             provider_routing: Arc::new(RwLock::new(ProviderRouting::default())),
@@ -1637,6 +1713,7 @@ impl OpenRouterProvider {
             static_context_limits,
             static_image_input_support: HashMap::new(),
             send_openrouter_headers,
+            conversation_id: new_conversation_id(),
             models_cache: Arc::new(RwLock::new(ModelsCache::default())),
             model_catalog_refresh: Arc::new(Mutex::new(ModelCatalogRefreshState::default())),
             provider_routing: Arc::new(RwLock::new(provider_routing)),
@@ -1680,6 +1757,7 @@ impl OpenRouterProvider {
             static_context_limits: HashMap::new(),
             static_image_input_support: HashMap::new(),
             send_openrouter_headers: true,
+            conversation_id: new_conversation_id(),
             models_cache: Arc::new(RwLock::new(ModelsCache::default())),
             model_catalog_refresh: Arc::new(Mutex::new(ModelCatalogRefreshState::default())),
             provider_routing: Arc::new(RwLock::new(Self::parse_provider_routing())),
@@ -1751,6 +1829,7 @@ impl OpenRouterProvider {
             static_context_limits,
             static_image_input_support: HashMap::new(),
             send_openrouter_headers: false,
+            conversation_id: new_conversation_id(),
             models_cache: Arc::new(RwLock::new(ModelsCache::default())),
             model_catalog_refresh: Arc::new(Mutex::new(ModelCatalogRefreshState::default())),
             provider_routing: Arc::new(RwLock::new(ProviderRouting::default())),
@@ -1956,6 +2035,7 @@ impl OpenRouterProvider {
                 static_context_limits: HashMap::new(),
                 static_image_input_support: HashMap::new(),
                 send_openrouter_headers: true,
+                conversation_id: new_conversation_id(),
                 models_cache: Arc::new(RwLock::new(ModelsCache::default())),
                 model_catalog_refresh: Arc::new(Mutex::new(ModelCatalogRefreshState::default())),
                 provider_routing: Arc::new(RwLock::new(ProviderRouting::default())),

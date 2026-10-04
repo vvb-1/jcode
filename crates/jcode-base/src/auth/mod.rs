@@ -24,6 +24,7 @@ pub mod refresh_state;
 mod status_types;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_sandbox;
+pub mod transfer;
 pub mod validation;
 
 pub(crate) use commands::command_exists;
@@ -990,7 +991,7 @@ fn build_auth_status_uncached(mode: AuthProbeMode) -> (AuthStatus, Vec<(&'static
         // An official Gemini Developer API key is a static credential with no
         // expiry handshake, so treat its presence as immediately Available and
         // fall back to OAuth token state otherwise.
-        status.gemini = if gemini::has_api_key() {
+        status.gemini = if gemini::uses_api_key() {
             AuthState::Available
         } else {
             refreshable_token_state(
